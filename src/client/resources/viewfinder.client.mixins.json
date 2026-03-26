@@ -1,0 +1,20 @@
+{
+   "required": true,
+   "package": "dev.xirreal.viewfinder.mixin.client",
+   "compatibilityLevel": "JAVA_21",
+   "client": [
+      "MixinGameRenderer",
+      "MixinIrisReload",
+      "MixinIrisErrors",
+      "MixinCreatePipeline",
+      "ShaderStorageBufferHolderAccessor",
+      "ShaderStorageBufferAccessor",
+      "MixinGLDebug",
+      "MixinComputeProgram",
+      "MixinRenderSystem",
+      "IrisRenderingPipelineAccessor"
+   ],
+   "injectors": {
+      "defaultRequire": 1
+   }
+}

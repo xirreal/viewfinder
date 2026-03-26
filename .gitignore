@@ -1,0 +1,24 @@
+# Build
+build/
+out/
+bin/
+
+# Gradle
+.gradle/
+
+# IDE
+.idea/
+*.iml
+.settings/
+.classpath
+.project
+
+# Compiled
+*.class
+
+# OS / Misc
+.DS_Store
+local.properties
+
+# Runtime
+run/

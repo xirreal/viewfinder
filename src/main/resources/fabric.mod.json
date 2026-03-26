@@ -1,0 +1,31 @@
+{
+   "schemaVersion": 1,
+   "id": "viewfinder",
+   "version": "${version}",
+   "name": "Viewfinder",
+   "description": "Shader debugging helper mod for Iris.",
+   "authors": ["xirreal"],
+   "contact": {
+      "sources": "https://github.com/xirreal/viewfinder"
+   },
+   "license": "CC0-1.0",
+   "icon": "assets/viewfinder/icon.png",
+   "environment": "*",
+   "entrypoints": {
+      "main": ["dev.xirreal.viewfinder.Viewfinder"],
+      "client": ["dev.xirreal.viewfinder.ViewfinderClient"]
+   },
+   "mixins": [
+      {
+         "config": "viewfinder.client.mixins.json",
+         "environment": "client"
+      }
+   ],
+   "accessWidener": "viewfinder.accesswidener",
+   "depends": {
+      "fabricloader": ">=0.18.4",
+      "java": ">=21",
+      "fabric-api": "*",
+      "iris": "*"
+   }
+}
