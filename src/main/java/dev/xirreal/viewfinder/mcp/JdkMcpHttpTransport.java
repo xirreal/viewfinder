@@ -1,0 +1,125 @@
+package dev.xirreal.viewfinder.mcp;
+
+import com.sun.net.httpserver.HttpExchange;
+import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.server.McpStatelessServerHandler;
+import io.modelcontextprotocol.spec.McpError;
+import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpStatelessServerTransport;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import reactor.core.publisher.Mono;
+
+/** Stateless MCP transport backed by Minecraft's existing JDK runtime only. */
+public final class JdkMcpHttpTransport implements McpStatelessServerTransport {
+   private static final int MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+   private final McpJsonMapper json;
+   private volatile McpStatelessServerHandler handler;
+   private volatile boolean closing;
+
+   public JdkMcpHttpTransport(McpJsonMapper json) {
+      this.json = json;
+   }
+
+   @Override
+   public void setMcpHandler(McpStatelessServerHandler handler) {
+      this.handler = handler;
+   }
+
+   @Override
+   public Mono<Void> closeGracefully() {
+      return Mono.fromRunnable(() -> closing = true);
+   }
+
+   public void handle(HttpExchange exchange) throws IOException {
+      try {
+         if (!isSafeLoopbackRequest(exchange)) {
+            send(exchange, 403, "text/plain", "Forbidden");
+            return;
+         }
+         if (closing) {
+            send(exchange, 503, "text/plain", "Server is shutting down");
+            return;
+         }
+         if (!"POST".equals(exchange.getRequestMethod())) {
+            exchange.getResponseHeaders().set("Allow", "POST");
+            send(exchange, 405, "text/plain", "MCP uses POST /mcp");
+            return;
+         }
+         String accept = exchange.getRequestHeaders().getFirst("Accept");
+         if (accept == null || !accept.contains("application/json") || !accept.contains("text/event-stream")) {
+            sendError(exchange, 400, McpSchema.ErrorCodes.INVALID_REQUEST,
+               "Accept must include application/json and text/event-stream");
+            return;
+         }
+
+         byte[] body = exchange.getRequestBody().readNBytes(MAX_REQUEST_BYTES + 1);
+         if (body.length > MAX_REQUEST_BYTES) {
+            sendError(exchange, 413, McpSchema.ErrorCodes.INVALID_REQUEST, "Request body is too large");
+            return;
+         }
+         McpSchema.JSONRPCMessage message = McpSchema.deserializeJsonRpcMessage(json,
+            new String(body, StandardCharsets.UTF_8));
+         McpStatelessServerHandler current = handler;
+         if (current == null) throw new IllegalStateException("MCP handler is not initialized");
+
+         if (message instanceof McpSchema.JSONRPCRequest request) {
+            McpSchema.JSONRPCResponse response = current.handleRequest(McpTransportContext.EMPTY, request).block();
+            send(exchange, 200, "application/json", json.writeValueAsString(response));
+         } else if (message instanceof McpSchema.JSONRPCNotification notification) {
+            current.handleNotification(McpTransportContext.EMPTY, notification).block();
+            exchange.sendResponseHeaders(202, -1);
+         } else {
+            sendError(exchange, 400, McpSchema.ErrorCodes.INVALID_REQUEST,
+               "Expected a JSON-RPC request or notification");
+         }
+      } catch (IllegalArgumentException e) {
+         sendError(exchange, 400, McpSchema.ErrorCodes.INVALID_REQUEST, "Invalid JSON-RPC message");
+      } catch (Exception e) {
+         sendError(exchange, 500, McpSchema.ErrorCodes.INTERNAL_ERROR,
+            e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+      } finally {
+         exchange.close();
+      }
+   }
+
+   static boolean isSafeLoopbackRequest(HttpExchange exchange) {
+      InetAddress remote = exchange.getRemoteAddress().getAddress();
+      if (remote == null || !remote.isLoopbackAddress()) return false;
+
+      String host = exchange.getRequestHeaders().getFirst("Host");
+      if (host == null) return false;
+      String normalizedHost = host.toLowerCase(Locale.ROOT);
+      if (!(normalizedHost.equals("localhost") || normalizedHost.startsWith("localhost:")
+         || normalizedHost.equals("127.0.0.1") || normalizedHost.startsWith("127.0.0.1:")
+         || normalizedHost.equals("[::1]") || normalizedHost.startsWith("[::1]:"))) return false;
+
+      String origin = exchange.getRequestHeaders().getFirst("Origin");
+      if (origin == null || origin.equals("null")) return true;
+      try {
+         URI uri = URI.create(origin);
+         String originHost = uri.getHost();
+         return originHost != null && (originHost.equalsIgnoreCase("localhost")
+            || InetAddress.getByName(originHost).isLoopbackAddress());
+      } catch (Exception ignored) {
+         return false;
+      }
+   }
+
+   private void sendError(HttpExchange exchange, int status, int code, String message) throws IOException {
+      McpError error = McpError.builder(code).message(message).build();
+      send(exchange, status, "application/json", json.writeValueAsString(error));
+   }
+
+   private static void send(HttpExchange exchange, int status, String contentType, String body) throws IOException {
+      byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+      exchange.getResponseHeaders().set("Content-Type", contentType + "; charset=utf-8");
+      exchange.getResponseHeaders().set("Cache-Control", "no-store");
+      exchange.sendResponseHeaders(status, bytes.length);
+      exchange.getResponseBody().write(bytes);
+   }
+}

@@ -1,6 +1,7 @@
 package dev.xirreal.viewfinder.capture;
 
 import dev.xirreal.viewfinder.Viewfinder;
+import dev.xirreal.viewfinder.compat.MinecraftCompat;
 import java.io.File;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
@@ -53,7 +54,7 @@ public class ScreenshotScheduler {
 
       File file = Screenshot.getFile(screenshotsDir);
 
-      Screenshot.grab(mc.gameDirectory, mc.getMainRenderTarget(), component -> {
+      Screenshot.grab(mc.gameDirectory, MinecraftCompat.mainRenderTarget(mc), component -> {
          String path = file.getAbsolutePath();
          lastScreenshotPath = path;
 

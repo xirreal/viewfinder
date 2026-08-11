@@ -36,6 +36,16 @@ public class ErrorCapture {
             obj.addProperty("message", entry.message);
             obj.addProperty("stackTrace", entry.stackTrace);
             obj.addProperty("timestamp", entry.timestamp);
+            JsonArray compilerMessages = new JsonArray();
+            for (ShaderLogParser.Message parsed : ShaderLogParser.parse(entry.message)) {
+                JsonObject message = new JsonObject();
+                message.addProperty("severity", parsed.severity());
+                message.addProperty("file", parsed.file());
+                message.addProperty("line", parsed.line());
+                message.addProperty("message", parsed.message());
+                compilerMessages.add(message);
+            }
+            obj.add("compilerMessages", compilerMessages);
             array.add(obj);
         }
         return array;

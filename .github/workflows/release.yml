@@ -30,7 +30,7 @@ jobs:
          - name: build
            run: ./gradlew build
 
-         - name: publish
+         - name: publish Minecraft 26.1
            uses: Kir-Antipov/mc-publish@v3.3
            with:
               modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
@@ -40,7 +40,23 @@ jobs:
               github-generate-changelog: true
               github-token: ${{ secrets.GITHUB_TOKEN }}
 
+              files: versions/26.1/build/libs/!(*-sources).jar
+              github-files: versions/*/build/libs/!(*-sources).jar
+              name: Viewfinder ${{ github.ref_name }} for Minecraft 26.1
+              version: ${{ github.ref_name }}+26.1
               loaders: fabric
-              game-versions: |
-                 26.1
+              game-versions: 26.1
+              version-type: release
+
+         - name: publish Minecraft 26.2
+           uses: Kir-Antipov/mc-publish@v3.3
+           with:
+              modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
+              modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+
+              files: versions/26.2/build/libs/!(*-sources).jar
+              name: Viewfinder ${{ github.ref_name }} for Minecraft 26.2
+              version: ${{ github.ref_name }}+26.2
+              loaders: fabric
+              game-versions: 26.2
               version-type: release

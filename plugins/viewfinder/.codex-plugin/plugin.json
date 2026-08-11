@@ -1,0 +1,25 @@
+{
+  "name": "viewfinder",
+  "version": "2.0.0",
+  "description": "Inspect, debug, profile, and automate Iris shaders in a running Minecraft client.",
+  "author": {
+    "name": "xirreal"
+  },
+  "repository": "https://github.com/xirreal/viewfinder",
+  "license": "CC0-1.0",
+  "keywords": ["iris", "minecraft", "shaders", "mcp"],
+  "interface": {
+    "displayName": "Viewfinder",
+    "shortDescription": "Debug a live Iris shaderpack from Codex.",
+    "longDescription": "Connect Codex to Viewfinder's local MCP server to inspect shader diagnostics, GPU resources, programs, passes, and controlled singleplayer scenes.",
+    "developerName": "xirreal",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write", "Interactive"],
+    "defaultPrompt": [
+      "Inspect the active Iris shaderpack and prioritize its errors.",
+      "Profile 60 frames and identify the slowest shader passes.",
+      "Capture the output of a shader pass and analyze it."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

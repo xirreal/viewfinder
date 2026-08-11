@@ -8,7 +8,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = "net.irisshaders.iris.Iris", remap = false)
 public class MixinCreatePipeline {
-	@Inject(method = "createPipeline", at = @At("RETURN"), remap = false)
+	@Inject(method = "createPipeline(Lnet/irisshaders/iris/shaderpack/materialmap/NamespacedId;)Lnet/irisshaders/iris/pipeline/WorldRenderingPipeline;", at = @At("RETURN"), remap = false)
 	private static void viewfinder$onCreatePipeline(CallbackInfoReturnable<?> cir) {
 		Object pipeline = cir.getReturnValue();
 		if (pipeline != null && pipeline.getClass().getSimpleName().equals("VanillaRenderingPipeline")) {

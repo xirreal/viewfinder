@@ -1,13 +1,20 @@
 plugins {
 	id 'net.fabricmc.fabric-loom' version "${loom_version}"
 	id 'maven-publish'
+	id 'dev.kikugie.stonecutter'
 }
 
-version = project.mod_version
+def minecraftVersion = stonecutter.current.version.toString()
+def versionConfig = [
+	'26.1': [loader: '0.18.4', fabricApi: '0.144.0+26.1', iris: 'Yi5E3d2l', sodium: 'Amr4VcZo', java: 21, minecraftRange: '>=26.1 <26.2-', irisRange: '>=1.10.8'],
+	'26.2': [loader: '0.19.3', fabricApi: '0.157.0+26.2', iris: 'oaD6KQls', sodium: '2Yom1N68', java: 25, minecraftRange: '26.2.x', irisRange: '>=1.11.2']
+][minecraftVersion]
+
+version = "${project.mod_version}+${minecraftVersion}"
 group = project.maven_group
 
 base {
-	archivesName = project.archives_base_name
+	archivesName = "${project.archives_base_name}-${minecraftVersion}"
 }
 
 repositories {
@@ -35,7 +42,7 @@ loom {
 		}
 	}
 
-   accessWidenerPath = file("src/main/resources/viewfinder.accesswidener")
+   accessWidenerPath = rootProject.file("src/main/resources/viewfinder.accesswidener")
 }
 
 configurations {
@@ -44,34 +51,68 @@ configurations {
 
 dependencies {
 	// To change the versions see the gradle.properties file
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	minecraft "com.mojang:minecraft:${minecraftVersion}"
 
-	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc:fabric-loader:${versionConfig.loader}"
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
-	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${versionConfig.fabricApi}"
 
 	// Iris
-	implementation "maven.modrinth:iris:Yi5E3d2l"
+	implementation "maven.modrinth:iris:${versionConfig.iris}"
 
 	// Sodium (required by Iris at runtime)
-	runtimeOnly "maven.modrinth:sodium:Amr4VcZo"
+	runtimeOnly "maven.modrinth:sodium:${versionConfig.sodium}"
 
-	// Gson (for HTTP API JSON responses)
+	// JSON used by captures and MCP structured results
 	implementation "com.google.code.gson:gson:2.10.1"
+
+	// MCP protocol core. The HTTP listener stays on the JDK to avoid a web stack.
+	implementation(include("io.modelcontextprotocol.sdk:mcp-core:2.0.0"))
+	implementation(include("io.modelcontextprotocol.sdk:mcp-json-jackson2:2.0.0"))
+	implementation(include("io.projectreactor:reactor-core:3.7.0"))
+	implementation(include("org.reactivestreams:reactive-streams:1.0.4"))
+	implementation(include("com.fasterxml.jackson.core:jackson-annotations:2.20"))
+	implementation(include("com.fasterxml.jackson.core:jackson-core:2.20.1"))
+	implementation(include("com.fasterxml.jackson.core:jackson-databind:2.20.1"))
+	implementation(include("com.networknt:json-schema-validator:2.0.0"))
+	implementation(include("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.20.1"))
+	implementation(include("org.yaml:snakeyaml:2.4"))
+	implementation(include("com.ethlo.time:itu:1.14.0"))
+
+	testImplementation "org.junit.jupiter:junit-jupiter:5.12.2"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.12.2"
 
 }
 
+test {
+	useJUnitPlatform()
+}
+
 processResources {
-	inputs.property "version", project.version
+	def properties = [
+		version: project.version,
+		minecraft: versionConfig.minecraftRange,
+		loader: versionConfig.loader,
+		iris: versionConfig.irisRange,
+		java: versionConfig.java
+	]
+	inputs.properties properties
 
 	filesMatching("fabric.mod.json") {
-		expand "version": inputs.properties.version
+		expand properties
+	}
+}
+
+processClientResources {
+	inputs.property "java", versionConfig.java
+	filesMatching("viewfinder.client.mixins.json") {
+		expand java: versionConfig.java
 	}
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 21
+	it.options.release = versionConfig.java
 }
 
 java {
@@ -80,8 +121,8 @@ java {
 	// If you remove this line, sources will not be generated.
 	withSourcesJar()
 
-	sourceCompatibility = JavaVersion.VERSION_21
-	targetCompatibility = JavaVersion.VERSION_21
+	sourceCompatibility = JavaVersion.toVersion(versionConfig.java)
+	targetCompatibility = JavaVersion.toVersion(versionConfig.java)
 }
 
 jar {

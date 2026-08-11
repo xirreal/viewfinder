@@ -42,14 +42,14 @@ public class TextureDumper {
       GL43C.GL_RGBA32UI,
    };
 
-   private static boolean isIntegerFormat(int internalFormat) {
+   static boolean isIntegerFormat(int internalFormat) {
       for (int fmt : INTEGER_FORMATS) {
          if (fmt == internalFormat) return true;
       }
       return false;
    }
 
-   private static boolean isSignedFormat(int internalFormat) {
+   static boolean isSignedFormat(int internalFormat) {
       return (
          internalFormat == GL43C.GL_R8I ||
          internalFormat == GL43C.GL_RG8I ||
@@ -66,8 +66,10 @@ public class TextureDumper {
       );
    }
 
-   private static int getComponentCount(int internalFormat) {
+   static int getComponentCount(int internalFormat) {
       String name = getFormatName(internalFormat);
+      if ("R11F_G11F_B10F".equals(name)) return 3;
+      if ("RGB10_A2".equals(name)) return 4;
       if (name.startsWith("RGBA") || name.startsWith("BGRA")) return 4;
       if (name.startsWith("RGB") || name.startsWith("BGR")) return 3;
       if (name.startsWith("RG")) return 2;
@@ -400,7 +402,7 @@ public class TextureDumper {
       ImageIO.write(image, "PNG", outputFile);
    }
 
-   private static int detectTarget(int textureId) {
+   static int detectTarget(int textureId) {
       // Try GL_TEXTURE_2D first (most common)
       int prev2D = GL43C.glGetInteger(GL43C.GL_TEXTURE_BINDING_2D);
       GL43C.glBindTexture(GL43C.GL_TEXTURE_2D, textureId);
@@ -418,7 +420,7 @@ public class TextureDumper {
       return GL43C.GL_TEXTURE_2D;
    }
 
-   private static int getBindingQuery(int target) {
+   static int getBindingQuery(int target) {
       if (target == GL43C.GL_TEXTURE_3D) return GL43C.GL_TEXTURE_BINDING_3D;
       return GL43C.GL_TEXTURE_BINDING_2D;
    }
@@ -427,7 +429,7 @@ public class TextureDumper {
       return Math.max(0, Math.min(255, value));
    }
 
-   private static String getFormatName(int glFormat) {
+   static String getFormatName(int glFormat) {
       return switch (glFormat) {
          case GL43C.GL_RGBA8 -> "RGBA8";
          case GL43C.GL_RGB8 -> "RGB8";

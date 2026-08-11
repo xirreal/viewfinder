@@ -2,110 +2,187 @@ package dev.xirreal.viewfinder.capture;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import java.util.ArrayDeque;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.Deque;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
-import org.lwjgl.opengl.ARBTimerQuery;
-import org.lwjgl.opengl.GL43C;
+import java.util.concurrent.CompletableFuture;
+import org.lwjgl.opengl.GL33C;
 
 public class MetricsCollector {
 
    private static final int RING_BUFFER_CAPACITY = 50;
 
-   private final Map<String, Integer> activeQueries = new HashMap<>();
-   private final Map<String, Queue<Integer>> pendingQueries = new HashMap<>();
+   private final Deque<ActiveTiming> activeTimings = new ArrayDeque<>();
+   private final Queue<PendingTiming> pendingTimings = new ArrayDeque<>();
    private final Map<String, TimingRingBuffer> passTimings = Collections.synchronizedMap(new LinkedHashMap<>());
+   private int framesRemaining;
+   private int framesCaptured;
+   private boolean captureEnding;
+   private CompletableFuture<JsonObject> capture;
 
    public void beginTiming(String passName) {
-      if (activeQueries.containsKey(passName)) {
-         throw new IllegalStateException("Pass '" + passName + "' is already being timed. Call endTiming first.");
+      if (framesRemaining <= 0) return;
+      if (!activeTimings.isEmpty()) {
+         activeTimings.peek().hasChildren = true;
       }
 
-      collectPending(passName);
-      passTimings.putIfAbsent(passName, new TimingRingBuffer(RING_BUFFER_CAPACITY));
-
-      int query = GL43C.glGenQueries();
-      GL43C.glBeginQuery(GL43C.GL_TIME_ELAPSED, query);
-      activeQueries.put(passName, query);
+      int startQuery = GL33C.glGenQueries();
+      GL33C.glQueryCounter(startQuery, GL33C.GL_TIMESTAMP);
+      activeTimings.push(new ActiveTiming(passName, startQuery));
    }
 
-   public void endTiming(String passName) {
-      Integer query = activeQueries.remove(passName);
-      if (query == null) {
-         return;
-      }
-      GL43C.glEndQuery(GL43C.GL_TIME_ELAPSED);
-
-      pendingQueries.computeIfAbsent(passName, k -> new LinkedList<>()).add(query);
-   }
-
-   private void collectPending(String passName) {
-      Queue<Integer> pendingQueue = pendingQueries.get(passName);
-      if (pendingQueue == null) {
+   public void endTiming() {
+      ActiveTiming timing = activeTimings.poll();
+      if (timing == null) {
          return;
       }
 
-      while (!pendingQueue.isEmpty()) {
-         int pending = pendingQueue.peek();
-         int available = GL43C.glGetQueryObjecti(pending, GL43C.GL_QUERY_RESULT_AVAILABLE);
+      if (timing.hasChildren) {
+         GL33C.glDeleteQueries(timing.startQuery);
+         return;
+      }
+
+      int endQuery = GL33C.glGenQueries();
+      GL33C.glQueryCounter(endQuery, GL33C.GL_TIMESTAMP);
+      pendingTimings.add(new PendingTiming(timing.name, timing.startQuery, endQuery));
+   }
+
+   public void endFrame() {
+      collectPending();
+      if (framesRemaining > 0) {
+         framesCaptured++;
+         if (--framesRemaining == 0) captureEnding = true;
+      }
+      if (!captureEnding || !activeTimings.isEmpty() || !pendingTimings.isEmpty()) return;
+      CompletableFuture<JsonObject> done = capture;
+      capture = null;
+      captureEnding = false;
+      if (done != null) done.complete(toJson());
+   }
+
+   public CompletableFuture<JsonObject> captureFrames(int frames) {
+      if (frames < 1 || frames > 600) throw new IllegalArgumentException("frames must be between 1 and 600");
+      reset();
+      framesRemaining = frames;
+      framesCaptured = 0;
+      captureEnding = false;
+      capture = new CompletableFuture<>();
+      return capture;
+   }
+
+   public JsonObject finishCapture() {
+      collectPending();
+      JsonObject result = new JsonObject();
+      result.addProperty("framesCaptured", framesCaptured);
+      result.add("passes", toJson());
+      discardQueries();
+      framesRemaining = 0;
+      captureEnding = false;
+      CompletableFuture<JsonObject> pending = capture;
+      capture = null;
+      if (pending != null && !pending.isDone()) pending.complete(result.getAsJsonObject("passes"));
+      return result;
+   }
+
+   public boolean isCapturing() {
+      return framesRemaining > 0 || captureEnding;
+   }
+
+   private void collectPending() {
+      while (!pendingTimings.isEmpty()) {
+         PendingTiming pending = pendingTimings.peek();
+         int available = GL33C.glGetQueryObjecti(pending.endQuery, GL33C.GL_QUERY_RESULT_AVAILABLE);
 
          if (available == 0) {
             break;
          }
 
-         pendingQueue.poll();
+         pendingTimings.poll();
+         long start = GL33C.glGetQueryObjectui64(pending.startQuery, GL33C.GL_QUERY_RESULT);
+         long end = GL33C.glGetQueryObjectui64(pending.endQuery, GL33C.GL_QUERY_RESULT);
+         long nanos = Math.max(0L, end - start);
+         synchronized (passTimings) {
+            passTimings.computeIfAbsent(pending.name, k -> new TimingRingBuffer(RING_BUFFER_CAPACITY)).add(nanos);
+         }
 
-         long nanos = ARBTimerQuery.glGetQueryObjectui64(pending, GL43C.GL_QUERY_RESULT);
-         passTimings.computeIfAbsent(passName, k -> new TimingRingBuffer(RING_BUFFER_CAPACITY)).add(nanos);
-
-         GL43C.glDeleteQueries(pending);
+         GL33C.glDeleteQueries(pending.startQuery);
+         GL33C.glDeleteQueries(pending.endQuery);
       }
    }
 
    public Map<String, Long> getTimings() {
       Map<String, Long> result = new LinkedHashMap<>();
-      for (Map.Entry<String, TimingRingBuffer> entry : passTimings.entrySet()) {
-         result.put(entry.getKey(), entry.getValue().getLatest());
+      synchronized (passTimings) {
+         for (Map.Entry<String, TimingRingBuffer> entry : passTimings.entrySet()) {
+            result.put(entry.getKey(), entry.getValue().getLatest());
+         }
       }
       return result;
    }
 
    public JsonObject toJson() {
       JsonObject obj = new JsonObject();
-      for (Map.Entry<String, TimingRingBuffer> entry : passTimings.entrySet()) {
-         TimingRingBuffer buf = entry.getValue();
-         JsonObject pass = new JsonObject();
-         pass.addProperty("avg", buf.getAverage());
-         pass.addProperty("min", buf.getMin());
-         pass.addProperty("max", buf.getMax());
-         pass.addProperty("latest", buf.getLatest());
-         JsonArray samples = new JsonArray();
-         for (long s : buf.getSamples()) {
-            samples.add(s);
+      synchronized (passTimings) {
+         for (Map.Entry<String, TimingRingBuffer> entry : passTimings.entrySet()) {
+            TimingRingBuffer buf = entry.getValue();
+            JsonObject pass = new JsonObject();
+            pass.addProperty("avg", buf.getAverage());
+            pass.addProperty("min", buf.getMin());
+            pass.addProperty("max", buf.getMax());
+            pass.addProperty("latest", buf.getLatest());
+            JsonArray samples = new JsonArray();
+            for (long s : buf.getSamples()) {
+               samples.add(s);
+            }
+            pass.add("samples", samples);
+            obj.add(entry.getKey(), pass);
          }
-         pass.add("samples", samples);
-         obj.add(entry.getKey(), pass);
       }
       return obj;
    }
 
    public void reset() {
-      for (Integer query : activeQueries.values()) {
-         GL43C.glDeleteQueries(query);
+      discardQueries();
+      synchronized (passTimings) {
+         passTimings.clear();
       }
-      activeQueries.clear();
-
-      for (Queue<Integer> queue : pendingQueries.values()) {
-         for (Integer query : queue) {
-            GL43C.glDeleteQueries(query);
-         }
-      }
-      pendingQueries.clear();
-      passTimings.clear();
+      framesRemaining = 0;
+      framesCaptured = 0;
+      captureEnding = false;
+      CompletableFuture<JsonObject> pending = capture;
+      capture = null;
+      if (pending != null) pending.completeExceptionally(new IllegalStateException("Profile capture was reset"));
    }
+
+   private void discardQueries() {
+      for (ActiveTiming timing : activeTimings) {
+         GL33C.glDeleteQueries(timing.startQuery);
+      }
+      activeTimings.clear();
+
+      for (PendingTiming timing : pendingTimings) {
+         GL33C.glDeleteQueries(timing.startQuery);
+         GL33C.glDeleteQueries(timing.endQuery);
+      }
+      pendingTimings.clear();
+   }
+
+   private static final class ActiveTiming {
+
+      private final String name;
+      private final int startQuery;
+      private boolean hasChildren;
+
+      private ActiveTiming(String name, int startQuery) {
+         this.name = name;
+         this.startQuery = startQuery;
+      }
+   }
+
+   private record PendingTiming(String name, int startQuery, int endQuery) {}
 
    public static class TimingRingBuffer {
 

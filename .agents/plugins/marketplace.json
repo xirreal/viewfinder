@@ -1,0 +1,20 @@
+{
+  "name": "viewfinder-local",
+  "interface": {
+    "displayName": "Viewfinder Local"
+  },
+  "plugins": [
+    {
+      "name": "viewfinder",
+      "source": {
+        "source": "local",
+        "path": "./plugins/viewfinder"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

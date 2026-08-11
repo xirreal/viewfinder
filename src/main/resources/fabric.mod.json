@@ -23,9 +23,10 @@
    ],
    "accessWidener": "viewfinder.accesswidener",
    "depends": {
-      "fabricloader": ">=0.18.4",
-      "java": ">=21",
+      "fabricloader": ">=${loader}",
+      "minecraft": "${minecraft}",
+      "java": ">=${java}",
       "fabric-api": "*",
-      "iris": "*"
+      "iris": "${iris}"
    }
 }
