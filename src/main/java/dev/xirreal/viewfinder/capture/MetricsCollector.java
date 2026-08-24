@@ -21,6 +21,7 @@ public class MetricsCollector {
    private int framesRemaining;
    private int framesCaptured;
    private boolean captureEnding;
+   private boolean captureIncludesSamples = true;
    private CompletableFuture<JsonObject> capture;
 
    public void beginTiming(String passName) {
@@ -60,15 +61,20 @@ public class MetricsCollector {
       CompletableFuture<JsonObject> done = capture;
       capture = null;
       captureEnding = false;
-      if (done != null) done.complete(toJson());
+      if (done != null) done.complete(toJson(captureIncludesSamples));
    }
 
    public CompletableFuture<JsonObject> captureFrames(int frames) {
+      return captureFrames(frames, true);
+   }
+
+   public CompletableFuture<JsonObject> captureFrames(int frames, boolean includeSamples) {
       if (frames < 1 || frames > 600) throw new IllegalArgumentException("frames must be between 1 and 600");
       reset();
       framesRemaining = frames;
       framesCaptured = 0;
       captureEnding = false;
+      captureIncludesSamples = includeSamples;
       capture = new CompletableFuture<>();
       return capture;
    }
@@ -77,7 +83,7 @@ public class MetricsCollector {
       collectPending();
       JsonObject result = new JsonObject();
       result.addProperty("framesCaptured", framesCaptured);
-      result.add("passes", toJson());
+      result.add("passes", toJson(captureIncludesSamples));
       discardQueries();
       framesRemaining = 0;
       captureEnding = false;
@@ -124,21 +130,14 @@ public class MetricsCollector {
    }
 
    public JsonObject toJson() {
+      return toJson(true);
+   }
+
+   public JsonObject toJson(boolean includeSamples) {
       JsonObject obj = new JsonObject();
       synchronized (passTimings) {
          for (Map.Entry<String, TimingRingBuffer> entry : passTimings.entrySet()) {
-            TimingRingBuffer buf = entry.getValue();
-            JsonObject pass = new JsonObject();
-            pass.addProperty("avg", buf.getAverage());
-            pass.addProperty("min", buf.getMin());
-            pass.addProperty("max", buf.getMax());
-            pass.addProperty("latest", buf.getLatest());
-            JsonArray samples = new JsonArray();
-            for (long s : buf.getSamples()) {
-               samples.add(s);
-            }
-            pass.add("samples", samples);
-            obj.add(entry.getKey(), pass);
+            obj.add(entry.getKey(), entry.getValue().toJson(includeSamples));
          }
       }
       return obj;
@@ -152,6 +151,7 @@ public class MetricsCollector {
       framesRemaining = 0;
       framesCaptured = 0;
       captureEnding = false;
+      captureIncludesSamples = true;
       CompletableFuture<JsonObject> pending = capture;
       capture = null;
       if (pending != null) pending.completeExceptionally(new IllegalStateException("Profile capture was reset"));
@@ -244,6 +244,21 @@ public class MetricsCollector {
             for (int i = 0; i < count; i++) {
                result[i] = buffer[(start + i) % buffer.length];
             }
+         }
+         return result;
+      }
+
+      JsonObject toJson(boolean includeSamples) {
+         JsonObject result = new JsonObject();
+         result.addProperty("sampleCount", count);
+         result.addProperty("avg", getAverage());
+         result.addProperty("min", getMin());
+         result.addProperty("max", getMax());
+         result.addProperty("latest", getLatest());
+         if (includeSamples) {
+            JsonArray samples = new JsonArray();
+            for (long sample : getSamples()) samples.add(sample);
+            result.add("samples", samples);
          }
          return result;
       }

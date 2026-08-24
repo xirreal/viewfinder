@@ -18,6 +18,7 @@ import org.lwjgl.opengl.GL43C;
 
 public final class ProgramRegistry {
    private static final int MAX_BINARY_BYTES = 64 * 1024 * 1024;
+   private static final int MAX_RECOVERY_PROGRAMS = 64;
    private static final Map<Integer, String> names = new LinkedHashMap<>();
 
    private ProgramRegistry() {}
@@ -34,8 +35,29 @@ public final class ProgramRegistry {
       names.clear();
    }
 
-   public static JsonObject inspect(Integer requestedId) {
-      int id = requestedId == null ? GL20C.glGetInteger(GL20C.GL_CURRENT_PROGRAM) : requestedId;
+   public static synchronized int resolve(String name) {
+      if (name == null || name.isBlank()) throw new IllegalArgumentException("Program name must be non-empty");
+      Integer match = null;
+      for (Map.Entry<Integer, String> entry : names.entrySet()) {
+         if (!name.equals(entry.getValue())) continue;
+         if (match != null) {
+            throw new IllegalArgumentException("Program name is ambiguous: " + name + " (ids " + match + " and " + entry.getKey() + ")");
+         }
+         match = entry.getKey();
+      }
+      if (match == null) throw new IllegalArgumentException("Unknown Iris program name: " + name);
+      return match;
+   }
+
+   public static synchronized JsonObject listPrograms() {
+      JsonObject result = new JsonObject();
+      JsonArray programs = knownPrograms();
+      result.add("programs", programs);
+      result.addProperty("count", programs.size());
+      return result;
+   }
+
+   public static JsonObject inspect(int id) {
       JsonObject result = new JsonObject();
       result.addProperty("programId", id);
       synchronized (ProgramRegistry.class) {
@@ -43,7 +65,11 @@ public final class ProgramRegistry {
       }
       if (id == 0 || !GL20C.glIsProgram(id)) {
          result.addProperty("linked", false);
-         result.addProperty("error", id == 0 ? "No program is currently bound" : "Unknown OpenGL program id");
+         result.addProperty("error", "Unknown OpenGL program id: " + id);
+         synchronized (ProgramRegistry.class) {
+            result.addProperty("availableProgramCount", names.size());
+            result.add("availablePrograms", knownPrograms(MAX_RECOVERY_PROGRAMS));
+         }
          return result;
       }
 
@@ -53,22 +79,15 @@ public final class ProgramRegistry {
       result.add("uniforms", uniforms(id));
       result.add("uniformBlocks", interfaces(id, GL43C.GL_UNIFORM_BLOCK));
       result.add("shaderStorageBlocks", interfaces(id, GL43C.GL_SHADER_STORAGE_BLOCK));
-      synchronized (ProgramRegistry.class) {
-         JsonArray known = new JsonArray();
-         names.forEach((programId, name) -> {
-            JsonObject entry = new JsonObject();
-            entry.addProperty("id", programId);
-            entry.addProperty("name", name);
-            known.add(entry);
-         });
-         result.add("knownPrograms", known);
-      }
       return result;
    }
 
-   public static JsonObject dumpBinary(Integer requestedId, Path output) throws IOException {
-      int id = requestedId == null ? GL20C.glGetInteger(GL20C.GL_CURRENT_PROGRAM) : requestedId;
-      if (id == 0) throw new IllegalArgumentException("No program is currently bound");
+   public static JsonObject dumpBinary(int id, Path output) throws IOException {
+      JsonObject driver = driverInfo();
+      if (!driver.get("programBinaryDumpSupported").getAsBoolean()) {
+         throw new IllegalStateException("Program binary dumps require NVIDIA's proprietary OpenGL driver; active vendor is "
+            + driver.get("vendor").getAsString());
+      }
       if (!GL20C.glIsProgram(id)) throw new IllegalArgumentException("Unknown OpenGL program id: " + id);
       if (GL20C.glGetProgrami(id, GL20C.GL_LINK_STATUS) != GL20C.GL_TRUE) {
          throw new IllegalArgumentException("OpenGL program " + id + " is not linked");
@@ -104,15 +123,47 @@ public final class ProgramRegistry {
          result.addProperty("binaryFormatHex", "0x" + Integer.toHexString(format.get(0)).toUpperCase());
          result.addProperty("totalBytes", bytes);
          result.addProperty("retrievableHint", GL20C.glGetProgrami(id, GL41C.GL_PROGRAM_BINARY_RETRIEVABLE_HINT) == GL20C.GL_TRUE);
-         result.addProperty("vendor", GL11C.glGetString(GL11C.GL_VENDOR));
-         result.addProperty("renderer", GL11C.glGetString(GL11C.GL_RENDERER));
-         result.addProperty("openGlVersion", GL11C.glGetString(GL11C.GL_VERSION));
+         result.add("driver", driver);
+         result.addProperty("vendor", driver.get("vendor").getAsString());
+         result.addProperty("renderer", driver.get("renderer").getAsString());
+         result.addProperty("openGlVersion", driver.get("openGlVersion").getAsString());
          result.addProperty("path", output.toAbsolutePath().toString());
          result.addProperty("note", "NVIDIA proprietary drivers commonly embed readable NVIDIA pseudo-assembly; AMD binaries are effectively meaningless for this workflow. The format remains driver-specific and unstable across GPUs or driver versions");
          return result;
       } finally {
          MemoryUtil.memFree(binary);
       }
+   }
+
+   public static JsonObject driverInfo() {
+      String vendor = string(GL11C.GL_VENDOR);
+      JsonObject driver = new JsonObject();
+      driver.addProperty("vendor", vendor);
+      driver.addProperty("renderer", string(GL11C.GL_RENDERER));
+      driver.addProperty("openGlVersion", string(GL11C.GL_VERSION));
+      driver.addProperty("programBinaryDumpSupported", vendor.equals("NVIDIA Corporation"));
+      return driver;
+   }
+
+   private static JsonArray knownPrograms() {
+      return knownPrograms(Integer.MAX_VALUE);
+   }
+
+   private static JsonArray knownPrograms(int limit) {
+      JsonArray programs = new JsonArray();
+      names.forEach((programId, name) -> {
+         if (programs.size() >= limit) return;
+         JsonObject entry = new JsonObject();
+         entry.addProperty("id", programId);
+         entry.addProperty("name", name);
+         programs.add(entry);
+      });
+      return programs;
+   }
+
+   private static String string(int name) {
+      String value = GL11C.glGetString(name);
+      return value == null ? "unknown" : value;
    }
 
    private static JsonArray uniforms(int program) {

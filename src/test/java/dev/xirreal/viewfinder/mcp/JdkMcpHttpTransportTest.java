@@ -1,6 +1,7 @@
 package dev.xirreal.viewfinder.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
@@ -62,10 +63,49 @@ class JdkMcpHttpTransportTest {
       assertEquals(403, response.statusCode());
    }
 
+   @Test
+   void rejectsNonLiteralAndNullOrigins() {
+      assertFalse(JdkMcpHttpTransport.isSafeOrigin("http://localtest.me"));
+      assertFalse(JdkMcpHttpTransport.isSafeOrigin("null"));
+      assertTrue(JdkMcpHttpTransport.isSafeOrigin("http://localhost:7150"));
+      assertTrue(JdkMcpHttpTransport.isSafeOrigin("http://127.0.0.1:7150"));
+      assertTrue(JdkMcpHttpTransport.isSafeOrigin("http://[::1]:7150"));
+   }
+
+   @Test
+   void rejectsNonJsonRequests() throws Exception {
+      HttpResponse<String> response = post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}",
+         null, "text/plain", "application/json, text/event-stream");
+      assertEquals(415, response.statusCode());
+      assertTrue(response.body().contains("\"code\":-32600"));
+      assertFalse(response.body().contains("stackTrace"));
+   }
+
+   @Test
+   void returnsCompactJsonRpcParseErrors() throws Exception {
+      HttpResponse<String> response = post("not-json", null);
+      assertEquals(400, response.statusCode());
+      assertTrue(response.body().contains("\"jsonrpc\":\"2.0\""));
+      assertTrue(response.body().contains("\"id\":null"));
+      assertTrue(response.body().contains("\"code\":-32700"));
+      assertFalse(response.body().contains("stackTrace"));
+   }
+
+   @Test
+   void acceptsCaseInsensitiveMediaTypes() throws Exception {
+      HttpResponse<String> response = post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}",
+         null, "Application/JSON; charset=utf-8", "Application/JSON, Text/Event-Stream");
+      assertEquals(200, response.statusCode());
+   }
+
    private HttpResponse<String> post(String body, String origin) throws Exception {
+      return post(body, origin, "application/json", "application/json, text/event-stream");
+   }
+
+   private HttpResponse<String> post(String body, String origin, String contentType, String accept) throws Exception {
       HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
-         .header("Accept", "application/json, text/event-stream")
-         .header("Content-Type", "application/json")
+         .header("Accept", accept)
+         .header("Content-Type", contentType)
          .POST(HttpRequest.BodyPublishers.ofString(body));
       if (origin != null) request.header("Origin", origin);
       return HttpClient.newHttpClient().send(request.build(), HttpResponse.BodyHandlers.ofString());

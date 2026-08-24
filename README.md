@@ -5,6 +5,8 @@ A shader debugging mod for [Iris](https://irisshaders.dev/) on Fabric that expos
 ## Features
 
 - **Shader reload and error list** - trigger shader reloads and capture compilation errors
+- **Queued atomic workflows** - run up to 64 ordered actions without interleaving between MCP clients or agents
+- **Shaderpack and config switching** - list installed packs, select one, reset or apply options, and reload
 - **On-demand GPU profiles** - collect hierarchical per-pass timings over a fixed frame window without permanent query overhead
 - **Pipeline and program inspection** - observe nested Iris passes and reflect linked program uniforms, UBOs, and SSBOs
 - **Texture dumping** - inspect or export main/alternate colortex, depth, shadow, noise, and custom textures
@@ -69,7 +71,7 @@ Chat output uses clickable controls where Minecraft supports them: dumped file p
 
 ### MCP server
 
-When the Minecraft client starts, Viewfinder automatically starts a stateless Streamable HTTP MCP server at:
+When the Minecraft client starts, Viewfinder automatically starts a Streamable HTTP MCP server at:
 
 ```text
 http://127.0.0.1:7150/mcp
@@ -139,16 +141,66 @@ Tools:
 
 | Tool | Description |
 |---|---|
+| `get_mcp_status` | Inspect the active request and bounded shared queue without waiting behind it |
+| `run_actions` | Preflight and execute up to 64 ordered actions as one non-interleavable queued job |
 | `get_diagnostics`, `clear_diagnostics`, `reload_shaders` | Read or reset diagnostics and reload Iris |
-| `set_shader_options`, `write_shader_source` | Mutate the active shaderpack and reload |
-| `inspect_program`, `dump_program_binary` | Reflect a program or export its opaque driver binary |
-| `inspect_texture`, `dump_texture` | Probe or export an Iris texture/name or GL id |
-| `inspect_ssbo`, `dump_ssbo` | Probe or export an Iris SSBO binding |
+| `list_shaderpacks`, `switch_shaderpack` | Discover installed packs and switch pack/config |
+| `set_shader_options`, `write_shader_source`, `write_shader_sources` | Mutate config/source and reload once; use the plural tool for multiple files |
+| `inspect_program`, `dump_program_binary` | Reflect or export by preferred exact Iris name, or explicit GL id when unnamed |
+| `inspect_texture`, `dump_texture` | Probe or export by preferred Iris name, or explicit GL id when unnamed |
+| `inspect_ssbo`, `dump_ssbo` | Probe or export an explicit Iris SSBO binding |
 | `capture_frame`, `capture_pass_outputs` | Capture a frame or selected pass attachments |
-| `profile_frames` | Profile up to 1–600 frames; returns a partial result at its wall-clock deadline |
+| `profile_frames` | Profile up to 1–600 frames with summaries by default and optional raw samples |
 | `set_scene`, `control_ticks` | Control an integrated singleplayer server scene |
 
-`dump_program_binary` is intended only for NVIDIA's proprietary OpenGL driver. NVIDIA program binaries commonly contain readable NVIDIA pseudo-assembly that can help with profiling and understanding resource allocation and access. AMD program binaries are effectively meaningless for this workflow; do not call this tool on AMD or other non-NVIDIA drivers.
+Every operation except `get_mcp_status` and reads of immutable capture files uses one global FIFO execution queue. One
+active request and up to 32 waiting requests may share the running Minecraft instance; excess calls fail instead of
+growing an unbounded queue. Successful queued results include a request ID, initial queue position, queue time, and
+execution time. `get_mcp_status` deliberately bypasses the queue so another agent can inspect an active or waiting job.
+
+Use `run_actions` whenever later steps depend on state established by earlier steps. Every nested action is validated
+before action zero executes, preventing argument mistakes from causing partial mutations. Each action has a `type`
+equal to an existing tool name and otherwise uses that tool's arguments. The action-only `wait_frames`, `list_programs`,
+`list_textures`, and `list_ssbos` types provide bounded render warmup and lightweight resource discovery. Reload-capable tools return only
+their complete fresh errors and parsed `compilerMessages` when present, so inspect that response directly instead of
+appending `reload_shaders` or `get_diagnostics`. Use `get_diagnostics` only when the broader runtime snapshot is needed;
+its metrics are summarized unless `includeSamples` is true.
+
+Program and texture tools require exactly one selector. Prefer exact Iris `name` values because they survive reloads;
+use `id` only for unnamed OpenGL objects. SSBO tools require an explicit `index`. Missing identifiers never default to
+zero, and lookup failures include current valid names, indices, values, or observed passes where available.
+
+Use `write_shader_sources` for multi-file edits. It validates every path before writing, writes all requested sources,
+and performs at most one reload. This avoids repeated shader compilation and returns any resulting errors in the same response.
+
+For deterministic scene setup, freeze server ticks before `set_scene` in the same job and resume them when finished:
+
+```json
+{
+  "actions": [
+    {
+      "type": "switch_shaderpack",
+      "name": "MyShaderpack.zip",
+      "resetConfig": true,
+      "config": { "SHADOW_QUALITY": "HIGH" }
+    },
+    { "type": "control_ticks", "action": "freeze" },
+    { "type": "set_scene", "time": 6000, "weather": "clear" },
+    { "type": "wait_frames", "frames": 32 },
+    { "type": "capture_frame", "frames": 0 },
+    { "type": "profile_frames", "frames": 120, "maxSeconds": 60 },
+    { "type": "control_ticks", "action": "resume" }
+  ]
+}
+```
+
+No other MCP tool or mutable-resource read can run between those actions. This is isolation, not rollback: if an action
+fails, later actions are skipped and earlier Minecraft or file mutations remain applied. Manual in-game actions are
+outside the MCP queue. If a job fails after freezing ticks, resume them with `control_ticks` when appropriate.
+
+The bounded job and ordered-action model is adapted from [Vibris capture control](https://github.com/Luna5ama/vibris/blob/main/docs/capture-control.md#mcp-tools), scaled to Viewfinder's single in-process Minecraft runtime.
+
+`dump_program_binary` is restricted to NVIDIA's proprietary OpenGL driver. Unsupported vendors are rejected before capture. Up to 16 MiB of the complete NVIDIA pseudo-assembly is returned inline as MCP text content and also retained at the returned capture URI/path; the result reports whether inlining occurred.
 
 Resources:
 
@@ -159,3 +211,4 @@ Resources:
 - `viewfinder://capture/{captureId}/{file}`
 
 Capture tools write to `viewfinder_captures/<captureId>/` in the game directory. Viewfinder retains the newest 20 capture directories that it owns. Shader source writes are confined to `shaders/` and work only for unpacked directory shaderpacks. Scene and tick mutation is rejected outside singleplayer.
+Capture resource reads are limited to 16 MiB; larger captures remain available at the filesystem path returned by the dump tool.

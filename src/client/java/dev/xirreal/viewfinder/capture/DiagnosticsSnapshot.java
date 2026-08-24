@@ -20,16 +20,22 @@ import net.minecraft.client.Minecraft;
 public class DiagnosticsSnapshot {
 
    public static JsonObject create() {
+      return create(false);
+   }
+
+   public static JsonObject create(boolean includeSamples) {
       Minecraft minecraft = Minecraft.getInstance();
       JsonObject snapshot = new JsonObject();
-      snapshot.addProperty("schemaVersion", 2);
+      snapshot.addProperty("schemaVersion", 3);
       snapshot.addProperty("generatedAt", System.currentTimeMillis());
       snapshot.add("environment", environment(minecraft));
       snapshot.add("shaderpack", shaderpack(minecraft));
       snapshot.add("render", renderState(minecraft));
       snapshot.add("errors", Viewfinder.getErrorCapture().toJson());
-      snapshot.add("metrics", Viewfinder.getMetricsCollector().toJson());
+      snapshot.add("metrics", Viewfinder.getMetricsCollector().toJson(includeSamples));
+      snapshot.addProperty("metricsIncludeSamples", includeSamples);
       snapshot.add("pipeline", CurrentPass.pipelineJson());
+      snapshot.add("programs", ProgramRegistry.listPrograms());
       snapshot.add("textures", TextureResolver.listTextures());
       snapshot.add("ssbos", SSBOResolver.listBuffers());
       snapshot.add("patchedShaders", patchedShaders(minecraft));
@@ -154,6 +160,12 @@ public class DiagnosticsSnapshot {
          render.addProperty("gpuUtilizationError", message(e));
       }
 
+      try {
+         render.add("openGlDriver", ProgramRegistry.driverInfo());
+      } catch (Exception e) {
+         render.addProperty("openGlDriverError", message(e));
+      }
+
       return render;
    }
 
@@ -207,7 +219,8 @@ public class DiagnosticsSnapshot {
       JsonArray actions = new JsonArray();
       int errorCount = snapshot.getAsJsonArray("errors").size();
       if (errorCount > 0) {
-         actions.add(action("Inspect captured errors", "get_diagnostics", null, "/viewfinder errors", "Errors are present in the snapshot"));
+         actions.add(action("Resolve included shader errors", null, null, null,
+            "Use errors[].compilerMessages in this response directly; read a shader source or patched-shader resource only when source context is needed. Do not call get_diagnostics again for the same errors"));
       }
 
       JsonObject textures = snapshot.getAsJsonObject("textures");

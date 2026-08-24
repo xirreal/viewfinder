@@ -10,6 +10,7 @@
       "ShaderStorageBufferHolderAccessor",
       "ShaderStorageBufferAccessor",
       "MixinGLDebug",
+      "MixinProgram",
       "MixinProgramBuilder",
       "MixinProgramCreator",
       "IrisRenderingPipelineAccessor"

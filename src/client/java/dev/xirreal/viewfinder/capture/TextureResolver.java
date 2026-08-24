@@ -15,6 +15,7 @@ import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.shadows.ShadowRenderTargets;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 
 public class TextureResolver {
@@ -156,6 +157,24 @@ public class TextureResolver {
         TextureAccess noise = customTexMgr.getNoiseTexture();
         if (noise != null) addNamedTexture(customArray, "noisetex", noise.getTextureId().getAsInt());
 
+        return result;
+    }
+
+    public static JsonArray listTextureNames() {
+        JsonObject textures = listTextures();
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (String group : new String[] { "colortex", "depth", "shadow", "custom" }) {
+            if (!textures.has(group) || !textures.get(group).isJsonArray()) continue;
+            textures.getAsJsonArray(group).forEach(element -> {
+                JsonObject texture = element.getAsJsonObject();
+                if (!texture.has("name")) return;
+                String name = texture.get("name").getAsString();
+                names.add(name);
+                if (group.equals("colortex") && texture.has("alternateTextureId")) names.add(name + "_alt");
+            });
+        }
+        JsonArray result = new JsonArray();
+        names.forEach(result::add);
         return result;
     }
 

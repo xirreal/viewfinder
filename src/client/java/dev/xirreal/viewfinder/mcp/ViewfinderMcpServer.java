@@ -24,21 +24,24 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 public final class ViewfinderMcpServer {
    public static final int PORT = 7150;
    public static final String ENDPOINT = "http://127.0.0.1:" + PORT + "/mcp";
+   private static final long MAX_RESOURCE_BYTES = 16L * 1024 * 1024;
 
    private final McpJsonMapper json = McpJsonDefaults.getMapper();
    private final JdkMcpHttpTransport transport = new JdkMcpHttpTransport(json);
+   private final McpRequestQueue requestQueue = new McpRequestQueue();
    private HttpServer http;
    private ExecutorService executor;
 
    public void start() throws IOException {
       var server = McpServer.sync(transport)
          .serverInfo("viewfinder", Viewfinder.VERSION)
-         .instructions("Inspect, capture, profile, edit, and reload the active Iris shaderpack. Mutation tools affect the running client; scene tools require singleplayer.")
-         .requestTimeout(Duration.ofMinutes(2))
+         .instructions("Inspect, capture, profile, edit, switch, and reload Iris shaderpacks. Prefer run_actions for dependent steps: all actions are validated before action zero, then execute in order without interleaving. Reload-capable tools return complete fresh errors and parsed compilerMessages inline; inspect those directly instead of calling reload_shaders or get_diagnostics again. Use write_shader_sources for multiple files so they reload once. Prefer stable Iris names over GL ids; identifiers are never inferred. GPU profiles return summaries unless includeSamples is true. For deterministic scenes, freeze ticks before set_scene in the same run_actions job and resume when finished. All standalone tools share the same bounded queue. Mutation tools affect the running client; scene tools require singleplayer.")
+         .requestTimeout(Duration.ofMinutes(30))
          .jsonMapper(json)
          .tools(tools())
          .resources(resources())
@@ -62,68 +65,64 @@ public final class ViewfinderMcpServer {
 
    public void stop() {
       transport.closeGracefully().block();
+      requestQueue.close();
       if (http != null) http.stop(0);
       if (executor != null) executor.close();
    }
 
    private List<McpStatelessServerFeatures.SyncToolSpecification> tools() {
       List<McpStatelessServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
-      tools.add(tool("get_diagnostics", "Get the current shaderpack, errors, render state, resources, metrics, and suggested actions.", object(), true,
-         args -> ViewfinderOperations.diagnostics()));
-      tools.add(tool("clear_diagnostics", "Clear captured shader diagnostics.", object(), false,
+      tools.add(unqueuedTool("get_mcp_status", "Inspect the shared MCP execution queue while another request is running.", ViewfinderToolSchemas.input("get_mcp_status"), true,
+         args -> queueStatus()));
+      tools.add(tool("run_actions", "Run 1-64 dependent actions as one queued, non-interleavable MCP job. Every action is validated before action zero executes. Reload-capable actions already return fresh errors; do not add get_diagnostics solely to check them. Most action types match existing tools; wait_frames, list_programs, list_textures, and list_ssbos are action-only. Supported types: " + ViewfinderToolSchemas.actionTypeDescription(), ViewfinderToolSchemas.input("run_actions"), false,
+         ViewfinderOperations::runActions));
+      tools.add(tool("get_diagnostics", "Get the current shaderpack, complete captured errors with parsed compiler messages, render state, resources, summarized metrics, and suggested actions. Raw timing samples are opt-in.", ViewfinderToolSchemas.input("get_diagnostics"), true,
+         ViewfinderOperations::diagnostics));
+      tools.add(tool("clear_diagnostics", "Clear captured shader diagnostics.", ViewfinderToolSchemas.input("clear_diagnostics"), false,
          args -> ViewfinderOperations.clearDiagnostics()));
-      tools.add(tool("reload_shaders", "Reload the active Iris shaderpack and return fresh diagnostics.", object(), false,
+      tools.add(tool("reload_shaders", "Reload the active Iris shaderpack. Returns complete fresh errors with parsed compiler messages when present, so inspect those directly instead of following with get_diagnostics.", ViewfinderToolSchemas.input("reload_shaders"), false,
          args -> ViewfinderOperations.reloadShaders()));
-      tools.add(tool("set_shader_options", "Set active shaderpack option values and reload.", schema(
-         property("options", "object", "Option names mapped to boolean or string values"), required("options")), false,
+      tools.add(tool("list_shaderpacks", "List installed Iris shaderpacks, the selected pack, and its effective option config.", ViewfinderToolSchemas.input("list_shaderpacks"), true,
+         args -> ViewfinderOperations.listShaderpacks()));
+      tools.add(tool("switch_shaderpack", "Switch to an installed Iris shaderpack, optionally apply an option config, reload once, and return complete fresh errors; no follow-up reload or diagnostics call is needed.", ViewfinderToolSchemas.input("switch_shaderpack"), false,
+         ViewfinderOperations::switchShaderpack));
+      tools.add(tool("set_shader_options", "Set active shaderpack option values, reload once, and return complete fresh errors; use reset with an empty object to restore defaults.", ViewfinderToolSchemas.input("set_shader_options"), false,
          ViewfinderOperations::setShaderOptions));
-      tools.add(tool("write_shader_source", "Write a file inside a directory shaderpack's shaders folder, optionally reloading.", schema(
-         property("path", "string", "Path relative to the shaderpack, beginning with shaders/"),
-         property("source", "string", "Complete replacement source"), property("reload", "boolean", "Reload after writing"),
-         required("path", "source")), false, ViewfinderOperations::writeShaderSource));
-      tools.add(tool("inspect_program", "Reflect the current or specified OpenGL program, uniforms, UBOs, and SSBOs.", schema(
-         property("id", "integer", "Optional OpenGL program id")), true, ViewfinderOperations::inspectProgram));
-      tools.add(tool("dump_program_binary", "NVIDIA proprietary OpenGL driver only. Dump the current or specified program binary; NVIDIA blobs commonly contain readable pseudo-assembly useful for profiling and resource-access analysis, while AMD blobs are effectively meaningless for this workflow. Do not call this tool on non-NVIDIA drivers.", schema(
-         property("id", "integer", "Optional OpenGL program id")), false, ViewfinderOperations::dumpProgramBinary));
-      tools.add(tool("inspect_texture", "Inspect bounded texture metadata, pixel samples, and channel statistics by Iris name or GL id.", schema(
-         property("name", "string", "Iris texture name such as colortex0"), property("id", "integer", "OpenGL texture id"),
-         property("samples", "integer", "Maximum sampled pixels"), property("x", "integer", "Pixel x"),
-         property("y", "integer", "Pixel y"), property("z", "integer", "Texture layer")), true, ViewfinderOperations::inspectTexture));
-      tools.add(tool("dump_texture", "Dump an Iris texture or OpenGL texture id into the bounded capture store.", schema(
-         property("name", "string", "Iris texture name"), property("id", "integer", "OpenGL texture id"),
-         property("raw", "boolean", "Write raw bytes instead of PNG")), false, ViewfinderOperations::dumpTexture));
-      tools.add(tool("inspect_ssbo", "Inspect bounded bytes and typed previews from an Iris shader storage buffer.", schema(
-         property("index", "integer", "Iris SSBO binding index"), property("bytes", "integer", "Preview byte count")), true,
+      tools.add(tool("write_shader_source", "Write one file inside a directory shaderpack's shaders folder and optionally reload. Prefer write_shader_sources when changing multiple files.", ViewfinderToolSchemas.input("write_shader_source"), false,
+         ViewfinderOperations::writeShaderSource));
+      tools.add(tool("write_shader_sources", "Write 1-64 files inside a directory shaderpack's shaders folder, validating every path first and reloading at most once.", ViewfinderToolSchemas.input("write_shader_sources"), false,
+         ViewfinderOperations::writeShaderSources));
+      tools.add(tool("inspect_program", "Reflect an Iris program. Prefer its exact Iris name because names survive reloads; use a GL id only when no name exists. Exactly one selector is required.", ViewfinderToolSchemas.input("inspect_program"), true,
+         ViewfinderOperations::inspectProgram));
+      tools.add(tool("dump_program_binary", "NVIDIA proprietary OpenGL driver only. Dump and inline up to 16 MiB of a program's complete pseudo-assembly. Prefer its exact Iris name because names survive reloads; use a GL id only when no name exists. Exactly one selector is required; unsupported drivers are rejected.", ViewfinderToolSchemas.input("dump_program_binary"), false,
+         ViewfinderOperations::dumpProgramBinary));
+      tools.add(tool("inspect_texture", "Inspect bounded texture metadata, pixel samples, and channel statistics. Prefer an Iris texture name; use a GL id only when no name exists. Exactly one selector is required.", ViewfinderToolSchemas.input("inspect_texture"), true,
+         ViewfinderOperations::inspectTexture));
+      tools.add(tool("dump_texture", "Dump a texture into the bounded capture store. Prefer an Iris texture name; use a GL id only when no name exists. Exactly one selector is required.", ViewfinderToolSchemas.input("dump_texture"), false,
+         ViewfinderOperations::dumpTexture));
+      tools.add(tool("inspect_ssbo", "Inspect bounded bytes and typed previews from an explicit Iris shader storage buffer index.", ViewfinderToolSchemas.input("inspect_ssbo"), true,
          ViewfinderOperations::inspectSsbo));
-      tools.add(tool("dump_ssbo", "Dump an Iris shader storage buffer into the bounded capture store.", schema(
-         property("index", "integer", "Iris SSBO binding index"), required("index")), false, ViewfinderOperations::dumpSsbo));
-      tools.add(tool("capture_frame", "Capture a rendered frame after an optional delay.", schema(
-         property("frames", "integer", "Frames to wait before capture")), false, ViewfinderOperations::captureFrame));
-      tools.add(tool("profile_frames", "Collect hierarchical Iris GPU pass timings for the next fixed number of frames.", schema(
-         property("frames", "integer", "Frames to profile, 1-600"),
-         property("maxSeconds", "integer", "Wall-clock deadline, 5-110 seconds; returns a partial profile when reached")), false,
+      tools.add(tool("dump_ssbo", "Dump an explicit Iris shader storage buffer index into the bounded capture store.", ViewfinderToolSchemas.input("dump_ssbo"), false,
+         ViewfinderOperations::dumpSsbo));
+      tools.add(tool("capture_frame", "Capture a rendered frame after an optional delay.", ViewfinderToolSchemas.input("capture_frame"), false,
+         ViewfinderOperations::captureFrame));
+      tools.add(tool("profile_frames", "Collect summarized hierarchical Iris GPU pass timings for the next fixed number of frames; raw samples are opt-in.", ViewfinderToolSchemas.input("profile_frames"), false,
          ViewfinderOperations::profileFrames));
-      tools.add(tool("capture_pass_outputs", "Capture bound framebuffer texture attachments when a named Iris pass next ends.", schema(
-         property("pass", "string", "Observed leaf name or full pipeline path"),
-         property("timeoutSeconds", "integer", "How long to wait for the pass"), required("pass")), false,
+      tools.add(tool("capture_pass_outputs", "Capture bound framebuffer texture attachments when an exact named Iris pass next ends; timeout failures return observed pass choices.", ViewfinderToolSchemas.input("capture_pass_outputs"), false,
          ViewfinderOperations::capturePassOutputs));
-      tools.add(tool("set_scene", "Set the authoritative singleplayer player pose, clock time, and weather.", schema(
-         property("x", "number", "Player x"), property("y", "number", "Player y"), property("z", "number", "Player z"),
-         property("yaw", "number", "Player yaw"), property("pitch", "number", "Player pitch"),
-         property("time", "integer", "World clock ticks"), enumProperty("weather", "clear", "rain", "thunder")), false,
+      tools.add(tool("set_scene", "Set at least one authoritative singleplayer player pose, clock, or weather field. For deterministic setup, freeze ticks first in the same run_actions job.", ViewfinderToolSchemas.input("set_scene"), false,
          ViewfinderOperations::setScene));
-      tools.add(tool("control_ticks", "Freeze, resume, or step the integrated singleplayer server.", schema(
-         enumProperty("action", "freeze", "resume", "step"), property("ticks", "integer", "Ticks to step"),
-         property("tickRate", "number", "Optional server tick rate"), required("action")), false, ViewfinderOperations::controlTicks));
+      tools.add(tool("control_ticks", "Freeze, resume, or step the integrated singleplayer server.", ViewfinderToolSchemas.input("control_ticks"), false,
+         ViewfinderOperations::controlTicks));
       return tools;
    }
 
    private List<McpStatelessServerFeatures.SyncResourceSpecification> resources() {
       return List.of(
          textResource("viewfinder://shaderpack/manifest", "shaderpack-manifest", "Active shaderpack sources and options",
-            request -> ViewfinderOperations.shaderpackManifest().toString()),
+            request -> queued("read_shaderpack_manifest", () -> ViewfinderOperations.shaderpackManifest().toString())),
          textResource("viewfinder://pipeline", "pipeline", "Observed hierarchical Iris render passes",
-            request -> ViewfinderOperations.pipeline().toString())
+            request -> queued("read_pipeline", () -> ViewfinderOperations.pipeline().toString()))
       );
    }
 
@@ -136,42 +135,112 @@ public final class ViewfinderMcpServer {
          "capture", null, "File produced by a Viewfinder capture tool", "application/octet-stream", null, null, null);
       return List.of(
          new McpStatelessServerFeatures.SyncResourceTemplateSpecification(source, (ctx, request) ->
-            text(request.uri(), ViewfinderOperations.shaderSource(after(request.uri(), "viewfinder://shaderpack/source/")))),
+            text(request.uri(), queued("read_shader_source", () ->
+               ViewfinderOperations.shaderSource(after(request.uri(), "viewfinder://shaderpack/source/"))))),
          new McpStatelessServerFeatures.SyncResourceTemplateSpecification(patched, (ctx, request) ->
-            text(request.uri(), ViewfinderOperations.patchedShader(after(request.uri(), "viewfinder://patched-shader/")))),
+            text(request.uri(), queued("read_patched_shader", () ->
+               ViewfinderOperations.patchedShader(after(request.uri(), "viewfinder://patched-shader/"))))),
          new McpStatelessServerFeatures.SyncResourceTemplateSpecification(capture, (ctx, request) -> binaryCapture(request.uri()))
       );
    }
 
    private McpStatelessServerFeatures.SyncToolSpecification tool(String name, String description,
       Map<String, Object> inputSchema, boolean readOnly, Function<Map<String, Object>, JsonObject> operation) {
+      return tool(name, description, inputSchema, readOnly, operation, true);
+   }
+
+   private McpStatelessServerFeatures.SyncToolSpecification unqueuedTool(String name, String description,
+      Map<String, Object> inputSchema, boolean readOnly, Function<Map<String, Object>, JsonObject> operation) {
+      return tool(name, description, inputSchema, readOnly, operation, false);
+   }
+
+   private McpStatelessServerFeatures.SyncToolSpecification tool(String name, String description,
+      Map<String, Object> inputSchema, boolean readOnly, Function<Map<String, Object>, JsonObject> operation, boolean queued) {
       McpSchema.ToolAnnotations annotations = new McpSchema.ToolAnnotations(null, readOnly, !readOnly, readOnly, false, false);
       McpSchema.Tool definition = new McpSchema.Tool(name, null, description, inputSchema, null, annotations, null, null);
       return new McpStatelessServerFeatures.SyncToolSpecification(definition, (ctx, request) -> {
          try {
-            JsonObject result = operation.apply(request.arguments() == null ? Map.of() : request.arguments());
+            Map<String, Object> arguments = request.arguments() == null ? Map.of() : request.arguments();
+            ViewfinderToolSchemas.validate(inputSchema, arguments, "Tool " + name);
+            McpRequestQueue.Result<JsonObject> execution = queued ? requestQueue.execute(name, () -> operation.apply(arguments)) : null;
+            JsonObject result = execution == null ? operation.apply(arguments) : execution.value();
+            if (execution != null) result.add("request", requestMetadata(execution));
             if (!result.has("message")) result.addProperty("message", userMessage(name, result));
             return new McpSchema.CallToolResult(contents(result),
-               false, ViewfinderOperations.structured(result), null);
+               !ViewfinderOperations.succeeded(result), ViewfinderOperations.structured(result), null);
          } catch (Exception e) {
             String message = rootMessage(e);
+            Map<String, Object> error = new LinkedHashMap<>();
+            error.put("error", message);
+            if (e instanceof McpRequestQueue.QueueFullException) {
+               error.put("code", "QUEUE_FULL");
+               error.put("retryable", true);
+            }
             return new McpSchema.CallToolResult(List.of(new McpSchema.TextContent(null, message, null)), true,
-               Map.of("error", message), null);
+               error, null);
          }
       });
+   }
+
+   private JsonObject queueStatus() {
+      McpRequestQueue.Snapshot snapshot = requestQueue.snapshot();
+      JsonObject result = new JsonObject();
+      result.addProperty("success", true);
+      result.addProperty("state", snapshot.state());
+      result.addProperty("queuedRequests", snapshot.queuedRequests());
+      result.addProperty("queueCapacity", snapshot.capacity());
+      result.addProperty("submittedRequests", snapshot.submittedRequests());
+      result.addProperty("completedRequests", snapshot.completedRequests());
+      result.addProperty("rejectedRequests", snapshot.rejectedRequests());
+      if (snapshot.active() != null) {
+         JsonObject active = new JsonObject();
+         active.addProperty("requestId", snapshot.active().requestId());
+         active.addProperty("operation", snapshot.active().operation());
+         active.addProperty("startedAt", snapshot.active().startedAtMillis());
+         result.add("activeRequest", active);
+      }
+      result.addProperty("message", snapshot.active() != null
+         ? "MCP request " + snapshot.active().requestId() + " is running; " + snapshot.queuedRequests() + " queued"
+         : snapshot.queuedRequests() > 0 ? snapshot.queuedRequests() + " MCP request(s) queued" : "MCP execution queue is idle");
+      return result;
+   }
+
+   private static JsonObject requestMetadata(McpRequestQueue.Result<?> execution) {
+      JsonObject request = new JsonObject();
+      request.addProperty("requestId", execution.requestId());
+      request.addProperty("initialQueuePosition", execution.queuePosition());
+      request.addProperty("queuedMillis", execution.queuedMillis());
+      request.addProperty("executionMillis", execution.executionMillis());
+      return request;
+   }
+
+   private <T> T queued(String operation, Supplier<T> task) {
+      return requestQueue.execute(operation, task).value();
    }
 
    private static List<McpSchema.Content> contents(JsonObject result) {
       List<McpSchema.Content> contents = new ArrayList<>();
       contents.add(new McpSchema.TextContent(null, summary(result), null));
-      if (result.has("resourceUri")) appendImage(contents, result.get("resourceUri").getAsString());
-      if (result.has("outputs") && result.get("outputs").isJsonArray()) {
-         result.getAsJsonArray("outputs").forEach(output -> {
-            JsonObject object = output.getAsJsonObject();
-            if (object.has("resourceUri")) appendImage(contents, object.get("resourceUri").getAsString());
+      appendResultContent(contents, result);
+      if (result.has("actionResults") && result.get("actionResults").isJsonArray()) {
+         result.getAsJsonArray("actionResults").forEach(action -> {
+            JsonObject object = action.getAsJsonObject();
+            if (object.has("result") && object.get("result").isJsonObject()) {
+               appendResultContent(contents, object.getAsJsonObject("result"));
+            }
          });
       }
       return contents;
+   }
+
+   private static void appendResultContent(List<McpSchema.Content> contents, JsonObject result) {
+      if (result.has("resourceUri")) appendImage(contents, result.get("resourceUri").getAsString());
+      appendProgramBinary(contents, result);
+      if (!result.has("outputs") || !result.get("outputs").isJsonArray()) return;
+      result.getAsJsonArray("outputs").forEach(output -> {
+         JsonObject object = output.getAsJsonObject();
+         if (object.has("resourceUri")) appendImage(contents, object.get("resourceUri").getAsString());
+      });
    }
 
    private static void appendImage(List<McpSchema.Content> contents, String uri) {
@@ -189,14 +258,47 @@ public final class ViewfinderMcpServer {
       }
    }
 
+   private static void appendProgramBinary(List<McpSchema.Content> contents, JsonObject result) {
+      if (!result.has("binaryFormat") || !result.has("resourceUri")) return;
+      String uri = result.get("resourceUri").getAsString();
+      try {
+         String rest = after(uri, "viewfinder://capture/");
+         int slash = rest.indexOf('/');
+         if (slash < 1) return;
+         Path file = ViewfinderOperations.captureFile(rest.substring(0, slash), rest.substring(slash + 1));
+         long bytes = Files.size(file);
+         result.addProperty("assemblyBytes", bytes);
+         if (bytes > MAX_RESOURCE_BYTES) {
+            result.addProperty("assemblyInlined", false);
+            result.addProperty("assemblyInlineLimitBytes", MAX_RESOURCE_BYTES);
+            return;
+         }
+         contents.add(programAssemblyContent(uri, Files.readAllBytes(file)));
+         result.addProperty("assemblyInlined", true);
+      } catch (Exception ignored) {
+         result.addProperty("assemblyInlined", false);
+      }
+   }
+
+   static McpSchema.EmbeddedResource programAssemblyContent(String uri, byte[] binary) {
+      return new McpSchema.EmbeddedResource(null,
+         new McpSchema.TextResourceContents(uri, "text/x-nvidia-assembly",
+            new String(binary, StandardCharsets.UTF_8), null));
+   }
+
    private McpStatelessServerFeatures.SyncResourceSpecification textResource(String uri, String name,
       String description, Function<McpSchema.ReadResourceRequest, String> reader) {
       McpSchema.Resource resource = new McpSchema.Resource(uri, name, null, description, "application/json", null, null, null, null);
-      return new McpStatelessServerFeatures.SyncResourceSpecification(resource, (ctx, request) -> text(request.uri(), reader.apply(request)));
+      return new McpStatelessServerFeatures.SyncResourceSpecification(resource,
+         (ctx, request) -> text(request.uri(), "application/json", reader.apply(request)));
    }
 
    private static McpSchema.ReadResourceResult text(String uri, String value) {
-      return new McpSchema.ReadResourceResult(List.of(new McpSchema.TextResourceContents(uri, "text/plain", value, null)), null);
+      return text(uri, "text/plain", value);
+   }
+
+   private static McpSchema.ReadResourceResult text(String uri, String mimeType, String value) {
+      return new McpSchema.ReadResourceResult(List.of(new McpSchema.TextResourceContents(uri, mimeType, value, null)), null);
    }
 
    private static McpSchema.ReadResourceResult binaryCapture(String uri) {
@@ -205,6 +307,10 @@ public final class ViewfinderMcpServer {
       if (slash < 1) throw new IllegalArgumentException("Capture URI must include capture id and file");
       Path file = ViewfinderOperations.captureFile(rest.substring(0, slash), rest.substring(slash + 1));
       try {
+         long bytes = Files.size(file);
+         if (bytes > MAX_RESOURCE_BYTES) {
+            throw new IllegalArgumentException("Capture exceeds the 16 MiB MCP resource limit: " + bytes + " bytes");
+         }
          String mime = Files.probeContentType(file);
          if (mime == null) mime = "application/octet-stream";
          String data = Base64.getEncoder().encodeToString(Files.readAllBytes(file));
@@ -212,36 +318,6 @@ public final class ViewfinderMcpServer {
       } catch (IOException e) {
          throw new IllegalStateException(e);
       }
-   }
-
-   private static Map<String, Object> object() {
-      return Map.of("type", "object", "additionalProperties", false);
-   }
-
-   @SafeVarargs
-   private static Map<String, Object> schema(Map.Entry<String, Object>... entries) {
-      Map<String, Object> schema = new LinkedHashMap<>();
-      schema.put("type", "object");
-      schema.put("additionalProperties", false);
-      Map<String, Object> properties = new LinkedHashMap<>();
-      for (Map.Entry<String, Object> entry : entries) {
-         if (entry.getKey().equals("required")) schema.put("required", entry.getValue());
-         else properties.put(entry.getKey(), entry.getValue());
-      }
-      schema.put("properties", properties);
-      return schema;
-   }
-
-   private static Map.Entry<String, Object> property(String name, String type, String description) {
-      return Map.entry(name, Map.of("type", type, "description", description));
-   }
-
-   private static Map.Entry<String, Object> enumProperty(String name, String... values) {
-      return Map.entry(name, Map.of("type", "string", "enum", List.of(values)));
-   }
-
-   private static Map.Entry<String, Object> required(String... names) {
-      return Map.entry("required", List.of(names));
    }
 
    private static String after(String uri, String prefix) {
@@ -256,6 +332,7 @@ public final class ViewfinderMcpServer {
    }
 
    private static String userMessage(String tool, JsonObject result) {
+      if (result.has("error")) return result.get("error").getAsString();
       return switch (tool) {
          case "get_diagnostics" -> "Diagnostics collected";
          case "inspect_program" -> result.has("programId") ? "Reflected OpenGL program " + result.get("programId").getAsInt()
