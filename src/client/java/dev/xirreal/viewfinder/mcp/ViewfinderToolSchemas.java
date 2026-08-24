@@ -88,10 +88,6 @@ final class ViewfinderToolSchemas {
       }
    }
 
-   static void validateAction(String type, Map<String, Object> action, int index) {
-      validate(action(type), action, "Action " + index + " (" + type + ")");
-   }
-
    private static Map<String, Object> runActions() {
       List<Map<String, Object>> variants = ACTION_TYPES.stream().map(ViewfinderToolSchemas::action).toList();
       return schema(Map.entry("actions", Map.of(

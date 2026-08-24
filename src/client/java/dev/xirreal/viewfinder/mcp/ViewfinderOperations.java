@@ -171,20 +171,17 @@ final class ViewfinderOperations {
       }, 90);
    }
 
-   static String actionTypes() {
-      return ViewfinderToolSchemas.actionTypeDescription();
-   }
-
+   @SuppressWarnings("unchecked")
    static JsonObject runActions(Map<String, Object> arguments) {
-      List<Map<String, Object>> normalized = preflightActions(arguments);
+      List<Map<String, Object>> actions = (List<Map<String, Object>>) arguments.get("actions");
 
       JsonArray actionResults = new JsonArray();
       JsonObject result = new JsonObject();
       result.addProperty("success", true);
-      result.addProperty("actionsRequested", normalized.size());
+      result.addProperty("actionsRequested", actions.size());
       int completed = 0;
-      for (int index = 0; index < normalized.size(); index++) {
-         Map<String, Object> action = normalized.get(index);
+      for (int index = 0; index < actions.size(); index++) {
+         Map<String, Object> action = actions.get(index);
          String type = string(action, "type", null);
          JsonObject entry = new JsonObject();
          entry.addProperty("index", index);
@@ -217,32 +214,6 @@ final class ViewfinderOperations {
       result.add("actionResults", actionResults);
       if (result.get("success").getAsBoolean()) result.addProperty("message", "Completed " + completed + " queued action(s) atomically");
       return result;
-   }
-
-   static List<Map<String, Object>> preflightActions(Map<String, Object> arguments) {
-      Object raw = arguments.get("actions");
-      if (!(raw instanceof List<?> actions) || actions.isEmpty() || actions.size() > ViewfinderToolSchemas.MAX_ACTIONS) {
-         throw new IllegalArgumentException("actions must contain 1-" + ViewfinderToolSchemas.MAX_ACTIONS + " objects");
-      }
-
-      List<Map<String, Object>> normalized = new ArrayList<>(actions.size());
-      for (int index = 0; index < actions.size(); index++) {
-         if (!(actions.get(index) instanceof Map<?, ?> action)) {
-            throw new IllegalArgumentException("action " + index + " must be an object");
-         }
-         Map<String, Object> values = new LinkedHashMap<>();
-         for (Map.Entry<?, ?> entry : action.entrySet()) {
-            if (!(entry.getKey() instanceof String key)) throw new IllegalArgumentException("action keys must be strings");
-            values.put(key, entry.getValue());
-         }
-         String type = string(values, "type", null);
-         if (type == null || !ViewfinderToolSchemas.actionTypes().contains(type)) {
-            throw new IllegalArgumentException("Unknown action type at index " + index + ": " + type + ". Supported: " + actionTypes());
-         }
-         ViewfinderToolSchemas.validateAction(type, values, index);
-         normalized.add(values);
-      }
-      return normalized;
    }
 
    static JsonObject writeShaderSource(Map<String, Object> arguments) {
@@ -878,9 +849,7 @@ final class ViewfinderOperations {
    }
 
    private static void addTextureChoices(JsonObject result) {
-      JsonArray names = TextureResolver.listTextureNames();
-      result.addProperty("availableTextureCount", names.size());
-      result.add("availableTextureNames", limited(names));
+      result.add("availableTextures", TextureResolver.listTextures());
    }
 
    private static JsonArray strings(Iterable<?> values) {

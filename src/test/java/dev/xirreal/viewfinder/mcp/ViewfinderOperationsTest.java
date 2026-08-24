@@ -33,13 +33,4 @@ class ViewfinderOperationsTest {
       assertThrows(IllegalArgumentException.class, () -> ViewfinderOperations.textureId(Map.of("name", "colortex0", "id", 23)));
    }
 
-   @Test
-   void allActionsArePreflightedBeforeExecution() {
-      Map<String, Object> arguments = Map.of("actions", java.util.List.of(
-         Map.of("type", "clear_diagnostics"),
-         Map.of("type", "inspect_program")
-      ));
-
-      assertThrows(IllegalArgumentException.class, () -> ViewfinderOperations.preflightActions(arguments));
-   }
 }

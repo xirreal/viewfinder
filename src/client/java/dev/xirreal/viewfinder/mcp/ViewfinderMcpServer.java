@@ -72,8 +72,8 @@ public final class ViewfinderMcpServer {
 
    private List<McpStatelessServerFeatures.SyncToolSpecification> tools() {
       List<McpStatelessServerFeatures.SyncToolSpecification> tools = new ArrayList<>();
-      tools.add(unqueuedTool("get_mcp_status", "Inspect the shared MCP execution queue while another request is running.", ViewfinderToolSchemas.input("get_mcp_status"), true,
-         args -> queueStatus()));
+      tools.add(tool("get_mcp_status", "Inspect the shared MCP execution queue while another request is running.", ViewfinderToolSchemas.input("get_mcp_status"), true,
+         args -> queueStatus(), false));
       tools.add(tool("run_actions", "Run 1-64 dependent actions as one queued, non-interleavable MCP job. Every action is validated before action zero executes. Reload-capable actions already return fresh errors; do not add get_diagnostics solely to check them. Most action types match existing tools; wait_frames, list_programs, list_textures, and list_ssbos are action-only. Supported types: " + ViewfinderToolSchemas.actionTypeDescription(), ViewfinderToolSchemas.input("run_actions"), false,
          ViewfinderOperations::runActions));
       tools.add(tool("get_diagnostics", "Get the current shaderpack, complete captured errors with parsed compiler messages, render state, resources, summarized metrics, and suggested actions. Raw timing samples are opt-in.", ViewfinderToolSchemas.input("get_diagnostics"), true,
@@ -149,11 +149,6 @@ public final class ViewfinderMcpServer {
       return tool(name, description, inputSchema, readOnly, operation, true);
    }
 
-   private McpStatelessServerFeatures.SyncToolSpecification unqueuedTool(String name, String description,
-      Map<String, Object> inputSchema, boolean readOnly, Function<Map<String, Object>, JsonObject> operation) {
-      return tool(name, description, inputSchema, readOnly, operation, false);
-   }
-
    private McpStatelessServerFeatures.SyncToolSpecification tool(String name, String description,
       Map<String, Object> inputSchema, boolean readOnly, Function<Map<String, Object>, JsonObject> operation, boolean queued) {
       McpSchema.ToolAnnotations annotations = new McpSchema.ToolAnnotations(null, readOnly, !readOnly, readOnly, false, false);
@@ -165,7 +160,7 @@ public final class ViewfinderMcpServer {
             McpRequestQueue.Result<JsonObject> execution = queued ? requestQueue.execute(name, () -> operation.apply(arguments)) : null;
             JsonObject result = execution == null ? operation.apply(arguments) : execution.value();
             if (execution != null) result.add("request", requestMetadata(execution));
-            if (!result.has("message")) result.addProperty("message", userMessage(name, result));
+            if (!result.has("message")) result.addProperty("message", summary(result));
             return new McpSchema.CallToolResult(contents(result),
                !ViewfinderOperations.succeeded(result), ViewfinderOperations.structured(result), null);
          } catch (Exception e) {
@@ -329,29 +324,6 @@ public final class ViewfinderMcpServer {
       if (result.has("message")) return result.get("message").getAsString();
       if (result.has("error")) return result.get("error").getAsString();
       return "Viewfinder operation completed";
-   }
-
-   private static String userMessage(String tool, JsonObject result) {
-      if (result.has("error")) return result.get("error").getAsString();
-      return switch (tool) {
-         case "get_diagnostics" -> "Diagnostics collected";
-         case "inspect_program" -> result.has("programId") ? "Reflected OpenGL program " + result.get("programId").getAsInt()
-            : "Program inspection completed";
-         case "dump_program_binary" -> result.has("captureId") ? "Program binary written to capture " + result.get("captureId").getAsString()
-            : "Program binary dump completed";
-         case "inspect_texture" -> result.has("name") ? "Inspected texture " + result.get("name").getAsString()
-            : result.has("textureId") ? "Inspected texture GL " + result.get("textureId").getAsInt()
-            : "Texture inspection completed";
-         case "dump_texture" -> result.has("captureId") ? "Texture dump written to capture " + result.get("captureId").getAsString()
-            : "Texture dump completed";
-         case "inspect_ssbo" -> result.has("index") ? "Inspected SSBO " + result.get("index").getAsInt()
-            : "SSBO inspection completed";
-         case "dump_ssbo" -> result.has("captureId") ? "SSBO dump written to capture " + result.get("captureId").getAsString()
-            : "SSBO dump completed";
-         case "capture_pass_outputs" -> result.has("pass") ? "Pass outputs captured for " + result.get("pass").getAsString()
-            : "Pass output capture completed";
-         default -> "Viewfinder " + tool + " completed";
-      };
    }
 
    private static String rootMessage(Throwable error) {
