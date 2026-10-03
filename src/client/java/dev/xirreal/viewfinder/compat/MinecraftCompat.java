@@ -33,6 +33,14 @@ public final class MinecraftCompat {
       *//*?}*/
    }
 
+   public static boolean isFullscreen(Minecraft minecraft) {
+      /*? if >=26.3 {*/
+      return minecraft.options.fullscreen().get();
+      /*?} else {*/
+      /*return minecraft.getWindow().isFullscreen();
+      *//*?}*/
+   }
+
    public static String versionType() {
       return SharedConstants.getCurrentVersion().stable() ? "release" : "snapshot";
    }

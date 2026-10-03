@@ -52,6 +52,46 @@ class ViewfinderToolSchemasTest {
    }
 
    @Test
+   void renderSettingsAcceptPartialUpdatesAndRejectInvalidValues() {
+      Map<String, Object> schema = ViewfinderToolSchemas.input("set_render_settings");
+      for (Map<String, Object> arguments : List.<Map<String, Object>>of(
+         Map.of("renderDistance", 2), Map.of("renderDistance", 32),
+         Map.of("fov", 30), Map.of("fov", 110),
+         Map.of("renderDistance", 12, "fov", 70))) {
+         assertDoesNotThrow(() -> ViewfinderToolSchemas.validate(schema, arguments, "render settings"));
+      }
+      for (Map<String, Object> arguments : List.<Map<String, Object>>of(
+         Map.of(), Map.of("renderDistance", 1), Map.of("renderDistance", 33),
+         Map.of("fov", 29), Map.of("fov", 111), Map.of("fov", 70.5),
+         Map.of("renderDistance", "12"), Map.of("renderDistance", 12, "fov", 111),
+         Map.of("fov", 70, "unknown", true))) {
+         assertThrows(IllegalArgumentException.class, () ->
+            ViewfinderToolSchemas.validate(schema, arguments, "render settings"), arguments.toString());
+      }
+      assertDoesNotThrow(() -> ViewfinderToolSchemas.validate(
+         ViewfinderToolSchemas.input("get_render_settings"), Map.of(), "render settings"));
+      assertThrows(IllegalArgumentException.class, () -> ViewfinderToolSchemas.validate(
+         ViewfinderToolSchemas.input("get_render_settings"), Map.of("fov", 70), "render settings"));
+   }
+
+   @Test
+   void renderSettingsWorkInBatchesAndInvalidUpdatesFailPreflight() {
+      Map<String, Object> schema = ViewfinderToolSchemas.input("run_actions");
+      assertDoesNotThrow(() -> ViewfinderToolSchemas.validate(schema, Map.of("actions", List.of(
+         Map.of("type", "get_render_settings"),
+         Map.of("type", "set_render_settings", "renderDistance", 12, "fov", 70),
+         Map.of("type", "wait_frames", "frames", 32),
+         Map.of("type", "capture_frame", "frames", 0))), "batch"));
+      for (Map<String, Object> invalid : List.<Map<String, Object>>of(
+         Map.of("type", "set_render_settings"),
+         Map.of("type", "set_render_settings", "renderDistance", 33),
+         Map.of("type", "set_render_settings", "fov", 29))) {
+         assertThrows(IllegalArgumentException.class, () -> ViewfinderToolSchemas.validate(schema,
+            Map.of("actions", List.of(Map.of("type", "reload_shaders"), invalid)), "batch"));
+      }
+   }
+
+   @Test
    void programBinaryIsExposedAsInlineAssemblyContent() {
       McpSchema.EmbeddedResource content = ViewfinderMcpServer.programAssemblyContent(
          "viewfinder://capture/test/program.bin", "!!NVpseudo assembly".getBytes(java.nio.charset.StandardCharsets.UTF_8));

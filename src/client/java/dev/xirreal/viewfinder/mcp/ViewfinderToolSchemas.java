@@ -14,7 +14,7 @@ final class ViewfinderToolSchemas {
       "set_shader_options", "write_shader_source", "write_shader_sources", "wait_frames", "capture_frame",
       "profile_frames", "capture_pass_outputs", "list_programs", "inspect_program", "dump_program_binary",
       "list_textures", "inspect_texture", "dump_texture", "list_ssbos", "inspect_ssbo", "dump_ssbo",
-      "set_scene", "control_ticks"
+      "get_render_settings", "set_render_settings", "set_scene", "control_ticks"
    );
 
    private ViewfinderToolSchemas() {}
@@ -30,7 +30,7 @@ final class ViewfinderToolSchemas {
    static Map<String, Object> input(String tool) {
       return switch (tool) {
          case "get_mcp_status", "clear_diagnostics", "reload_shaders", "list_shaderpacks", "list_programs",
-              "list_textures", "list_ssbos" -> object();
+              "list_textures", "list_ssbos", "get_render_settings" -> object();
          case "run_actions" -> runActions();
          case "get_diagnostics" -> schema(
             booleanProperty("includeSamples", "Include raw GPU timing samples; summaries are always returned", false));
@@ -71,6 +71,7 @@ final class ViewfinderToolSchemas {
             required("index"));
          case "dump_ssbo" -> schema(
             integerProperty("index", "Iris SSBO binding index", 0, null, null), required("index"));
+         case "set_render_settings" -> renderSettings();
          case "set_scene" -> scene();
          case "control_ticks" -> schema(
             enumProperty("action", "freeze", "resume", "step"),
@@ -155,6 +156,14 @@ final class ViewfinderToolSchemas {
          integerProperty("id", "OpenGL texture id; use only when no Iris name exists", 1, null, null),
          booleanProperty("raw", "Write raw bytes instead of PNG", false));
       exactlyOne(schema, "name", "id");
+      return schema;
+   }
+
+   private static Map<String, Object> renderSettings() {
+      Map<String, Object> schema = schema(
+         integerProperty("renderDistance", "Client render distance in chunks", 2, 32, null),
+         integerProperty("fov", "Base field of view in degrees, before gameplay FOV effects", 30, 110, null));
+      schema.put("minProperties", 1);
       return schema;
    }
 

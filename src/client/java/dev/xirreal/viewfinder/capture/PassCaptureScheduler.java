@@ -46,8 +46,16 @@ public final class PassCaptureScheduler {
       JsonObject result = new JsonObject();
       result.addProperty("captureId", directory.getFileName().toString());
       result.addProperty("pass", pass);
-      result.addProperty("framebuffer", GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING));
+      int framebuffer = GL11C.glGetInteger(GL30C.GL_DRAW_FRAMEBUFFER_BINDING);
+      result.addProperty("framebuffer", framebuffer);
       JsonArray outputs = new JsonArray();
+
+      if (framebuffer == 0) {
+         result.addProperty("skipped", true);
+         result.addProperty("reason", "Pass ended with the default framebuffer, which has no texture attachments");
+         result.add("outputs", outputs);
+         return result;
+      }
 
       int max = GL11C.glGetInteger(GL20C.GL_MAX_DRAW_BUFFERS);
       for (int index = 0; index < max; index++) {

@@ -125,13 +125,19 @@ public class DiagnosticsSnapshot {
    private static JsonObject renderState(Minecraft minecraft) {
       JsonObject render = new JsonObject();
       try {
+         render.add("settings", renderSettings(minecraft));
+      } catch (Exception e) {
+         render.addProperty("settingsError", message(e));
+      }
+
+      try {
          Window window = minecraft.getWindow();
          JsonObject windowJson = new JsonObject();
          windowJson.addProperty("width", window.getWidth());
          windowJson.addProperty("height", window.getHeight());
          windowJson.addProperty("guiScaledWidth", window.getGuiScaledWidth());
          windowJson.addProperty("guiScaledHeight", window.getGuiScaledHeight());
-         windowJson.addProperty("fullscreen", window.isFullscreen());
+         windowJson.addProperty("fullscreen", MinecraftCompat.isFullscreen(minecraft));
          windowJson.addProperty("focused", window.isFocused());
          render.add("window", windowJson);
       } catch (Exception e) {
@@ -167,6 +173,14 @@ public class DiagnosticsSnapshot {
       }
 
       return render;
+   }
+
+   public static JsonObject renderSettings(Minecraft minecraft) {
+      JsonObject settings = new JsonObject();
+      settings.addProperty("renderDistance", minecraft.options.renderDistance().get());
+      settings.addProperty("effectiveRenderDistance", minecraft.options.getEffectiveRenderDistance());
+      settings.addProperty("fov", minecraft.options.fov().get());
+      return settings;
    }
 
    private static JsonObject patchedShaders(Minecraft minecraft) {

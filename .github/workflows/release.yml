@@ -60,3 +60,16 @@ jobs:
               loaders: fabric
               game-versions: 26.2
               version-type: release
+
+         - name: publish Minecraft 26.3
+           uses: Kir-Antipov/mc-publish@v3.3
+           with:
+              modrinth-id: ${{ vars.MODRINTH_PROJECT_ID }}
+              modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+
+              files: versions/26.3/build/libs/!(*-sources).jar
+              name: Viewfinder ${{ github.ref_name }} for Minecraft 26.3
+              version: ${{ github.ref_name }}+26.3
+              loaders: fabric
+              game-versions: 26.3
+              version-type: release

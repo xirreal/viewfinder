@@ -7,7 +7,8 @@ plugins {
 def minecraftVersion = stonecutter.current.version.toString()
 def versionConfig = [
 	'26.1': [loader: '0.18.4', fabricApi: '0.144.0+26.1', iris: 'Yi5E3d2l', sodium: 'Amr4VcZo', java: 21, minecraftRange: '>=26.1 <26.2-', irisRange: '>=1.10.8'],
-	'26.2': [loader: '0.19.3', fabricApi: '0.157.0+26.2', iris: 'oaD6KQls', sodium: '2Yom1N68', java: 25, minecraftRange: '26.2.x', irisRange: '>=1.11.2']
+	'26.2': [loader: '0.19.3', fabricApi: '0.157.0+26.2', iris: 'oaD6KQls', sodium: '2Yom1N68', java: 25, minecraftRange: '26.2.x', irisRange: '>=1.11.2'],
+	'26.3': [loader: '0.19.5', fabricApi: '0.161.0+26.3', iris: 'vTN4NRGW', sodium: 'bAZQdGpg', java: 25, minecraftRange: '26.3.x', irisRange: '>=1.11.7']
 ][minecraftVersion]
 
 version = "${project.mod_version}+${minecraftVersion}"

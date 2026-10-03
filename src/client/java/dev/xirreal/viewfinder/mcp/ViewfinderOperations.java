@@ -39,6 +39,7 @@ import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.include.FileNode;
 import net.irisshaders.iris.shaderpack.option.OptionSet;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.OptionInstance;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -473,6 +474,40 @@ final class ViewfinderOperations {
       }
    }
 
+   static JsonObject getRenderSettings() {
+      return onClient(() -> {
+         JsonObject result = ok("Render settings queried");
+         result.add("settings", DiagnosticsSnapshot.renderSettings(Minecraft.getInstance()));
+         return result;
+      }, 5);
+   }
+
+   static JsonObject setRenderSettings(Map<String, Object> arguments) {
+      Integer distance = arguments.containsKey("renderDistance") ? requiredInteger(arguments, "renderDistance") : null;
+      Integer fov = arguments.containsKey("fov") ? requiredInteger(arguments, "fov") : null;
+      if (distance == null && fov == null) throw new IllegalArgumentException("renderDistance or fov is required");
+      return onClient(() -> {
+         Minecraft minecraft = Minecraft.getInstance();
+         var options = minecraft.options;
+         if (distance != null) validateRenderSetting("renderDistance", options.renderDistance().values(), distance);
+         if (fov != null) validateRenderSetting("fov", options.fov().values(), fov);
+
+         if (distance != null) options.renderDistance().set(distance);
+         if (fov != null) options.fov().set(fov);
+         options.save();
+
+         JsonObject result = ok("Render settings updated");
+         result.add("settings", DiagnosticsSnapshot.renderSettings(minecraft));
+         return result;
+      }, 10);
+   }
+
+   static void validateRenderSetting(String name, OptionInstance.ValueSet<Integer> values, int value) {
+      if (values.validateValue(value).filter(validated -> validated == value).isEmpty()) {
+         throw new IllegalArgumentException(name + " value " + value + " is unsupported by this client");
+      }
+   }
+
    static JsonObject setScene(Map<String, Object> arguments) {
       MinecraftServer server = onClient(() -> Minecraft.getInstance().getSingleplayerServer(), 5);
       if (server == null) throw new IllegalStateException("Scene mutation requires an open singleplayer world");
@@ -616,6 +651,8 @@ final class ViewfinderOperations {
          case "list_ssbos" -> onClient(SSBOResolver::listBuffers, 5);
          case "inspect_ssbo" -> inspectSsbo(arguments);
          case "dump_ssbo" -> dumpSsbo(arguments);
+         case "get_render_settings" -> getRenderSettings();
+         case "set_render_settings" -> setRenderSettings(arguments);
          case "set_scene" -> setScene(arguments);
          case "control_ticks" -> controlTicks(arguments);
          default -> throw new IllegalArgumentException("Unsupported action type: " + type);

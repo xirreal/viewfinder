@@ -2,3 +2,6 @@ accessWidener	v1	official
 
 # Minecraft Screenshot getFile
 accessible	method	net/minecraft/client/Screenshot	getFile	(Ljava/io/File;)Ljava/io/File;
+
+# Minecraft option validation (package-private before 26.2)
+accessible	class	net/minecraft/client/OptionInstance$ValueSet

@@ -110,6 +110,10 @@ public final class ViewfinderMcpServer {
          ViewfinderOperations::profileFrames));
       tools.add(tool("capture_pass_outputs", "Capture bound framebuffer texture attachments when an exact named Iris pass next ends; timeout failures return observed pass choices.", ViewfinderToolSchemas.input("capture_pass_outputs"), false,
          ViewfinderOperations::capturePassOutputs));
+      tools.add(tool("get_render_settings", "Query configured and effective client render distance in chunks and base FOV in degrees. Effective distance may be limited by the server; gameplay FOV effects are excluded.", ViewfinderToolSchemas.input("get_render_settings"), true,
+         args -> ViewfinderOperations.getRenderSettings()));
+      tools.add(tool("set_render_settings", "Set client render distance (2-32 chunks), base FOV (30-110 degrees), or both, and save Minecraft options. Returns the resulting settings. Works in singleplayer and multiplayer; wait_frames before dependent captures or profiles.", ViewfinderToolSchemas.input("set_render_settings"), false,
+         ViewfinderOperations::setRenderSettings));
       tools.add(tool("set_scene", "Set at least one authoritative singleplayer player pose, clock, or weather field. For deterministic setup, freeze ticks first in the same run_actions job.", ViewfinderToolSchemas.input("set_scene"), false,
          ViewfinderOperations::setScene));
       tools.add(tool("control_ticks", "Freeze, resume, or step the integrated singleplayer server.", ViewfinderToolSchemas.input("control_ticks"), false,

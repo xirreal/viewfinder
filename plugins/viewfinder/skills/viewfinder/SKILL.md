@@ -1,13 +1,14 @@
 ---
 name: viewfinder
-description: Use Viewfinder's local MCP server to inspect, edit, reload, profile, and capture an Iris shaderpack in a running Minecraft client. Use for live Iris shader debugging, queued multi-step workflows, shaderpack or option switching, GPU resource inspection, and deterministic singleplayer scenes. Do not use as a standalone GLSL compiler or to launch Minecraft.
+description: Debug, edit, profile, and capture live Iris shaderpacks through Viewfinder's MCP server in a running Minecraft client.
 ---
 
 # Viewfinder
 
 Use the `viewfinder` MCP server to work against the live Iris shaderpack. It
-requires a running Minecraft client with Viewfinder loaded; if the server is
-unavailable, ask the user to start or reconnect that client.
+requires a running Minecraft client with Viewfinder loaded and cannot launch
+Minecraft or compile GLSL standalone. If disconnected, continue useful local
+work and request a client connection when live validation is needed.
 
 ## Workflow
 
@@ -29,6 +30,10 @@ unavailable, ask the user to start or reconnect that client.
   when preceding actions reload the pack or change the scene. Use
   `profile_frames` summaries by default; request raw samples only when the
   analysis needs them.
+- Use `get_render_settings` to query configured/effective render distance and
+  base FOV, or `set_render_settings` with `renderDistance` (2-32 chunks) and/or
+  `fov` (30-110 degrees). Changes persist in Minecraft options. Put a
+  `wait_frames` action after changes before capturing or profiling the view.
 - Prefer exact Iris program and texture names because they survive reloads; use
   a GL id only for an unnamed object. Supply exactly one selector. SSBO tools
   always require an explicit binding index. Use returned choices to recover

@@ -2,7 +2,11 @@ package dev.xirreal.viewfinder.capture;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.mojang.blaze3d.opengl.GlTexture;
+/*? if >=26.3 {*/
+import com.mojang.renderpearl.backend.opengl.GlTexture;
+/*?} else {*/
+/*import com.mojang.blaze3d.opengl.GlTexture;
+*//*?}*/
 import dev.xirreal.viewfinder.mixin.client.IrisRenderingPipelineAccessor;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 import net.irisshaders.iris.Iris;

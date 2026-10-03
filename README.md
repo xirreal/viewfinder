@@ -19,22 +19,23 @@ A shader debugging mod for [Iris](https://irisshaders.dev/) on Fabric that expos
 - **Pass output capture** - export framebuffer attachments at the end of a selected Iris pass
 - **Shader mutation** - edit directory-pack sources or options and reload with structured diagnostics
 - **Deterministic scenes** - position the authoritative singleplayer player, set time/weather, and freeze or step ticks
+- **Client render settings** - query or change render distance and base FOV, with the server-limited effective distance reported
 
 ## Installation
 
-1. Install [Fabric Loader](https://fabricmc.net/) for Minecraft 26.1 or 26.2
+1. Install [Fabric Loader](https://fabricmc.net/) for Minecraft 26.1, 26.2, or 26.3
 2. Install [Fabric API](https://modrinth.com/mod/fabric-api) and [Iris](https://modrinth.com/mod/iris) (which requires [Sodium](https://modrinth.com/mod/sodium))
 3. Drop the Viewfinder `.jar` matching your Minecraft version into your `mods/` folder
 
 ## Development
 
-Stonecutter builds both supported versions from the shared source tree:
+Stonecutter builds all supported versions from the shared source tree:
 
 ```bash
 ./gradlew build
 ```
 
-The release jars are written to `versions/26.1/build/libs/` and `versions/26.2/build/libs/`. Use `./gradlew "Set active project to 26.1"` or `./gradlew "Set active project to 26.2"` when editing version-dependent source.
+The release jars are written to `versions/26.1/build/libs/`, `versions/26.2/build/libs/`, and `versions/26.3/build/libs/`. Minecraft 26.3 is the default active version. Use `./gradlew "Set active project to 26.1"`, `./gradlew "Set active project to 26.2"`, or `./gradlew "Set active project to 26.3"` when editing version-dependent source.
 
 ## Usage
 
@@ -151,6 +152,7 @@ Tools:
 | `inspect_ssbo`, `dump_ssbo` | Probe or export an explicit Iris SSBO binding |
 | `capture_frame`, `capture_pass_outputs` | Capture a frame or selected pass attachments |
 | `profile_frames` | Profile up to 1–600 frames with summaries by default and optional raw samples |
+| `get_render_settings`, `set_render_settings` | Query or change client render distance in chunks and base FOV in degrees |
 | `set_scene`, `control_ticks` | Control an integrated singleplayer server scene |
 
 Every operation except `get_mcp_status` and reads of immutable capture files uses one global FIFO execution queue. One
@@ -184,6 +186,7 @@ For deterministic scene setup, freeze server ticks before `set_scene` in the sam
       "resetConfig": true,
       "config": { "SHADOW_QUALITY": "HIGH" }
     },
+    { "type": "set_render_settings", "renderDistance": 12, "fov": 70 },
     { "type": "control_ticks", "action": "freeze" },
     { "type": "set_scene", "time": 6000, "weather": "clear" },
     { "type": "wait_frames", "frames": 32 },
@@ -199,6 +202,13 @@ fails, later actions are skipped and earlier Minecraft or file mutations remain 
 outside the MCP queue. If a job fails after freezing ticks, resume them with `control_ticks` when appropriate.
 
 The bounded job and ordered-action model is adapted from [Vibris capture control](https://github.com/Luna5ama/vibris/blob/main/docs/capture-control.md#mcp-tools), scaled to Viewfinder's single in-process Minecraft runtime.
+
+`get_render_settings` returns `settings.renderDistance`, `settings.effectiveRenderDistance` (which may be capped by the
+server), and `settings.fov`. The same values are included in diagnostics under `render.settings`. FOV is the base
+Minecraft setting before sprinting, zoom, or other gameplay effects. `set_render_settings` accepts `renderDistance`
+(2–32 chunks), `fov` (30–110 degrees), or both; omitted fields keep their current values. Values must also be supported
+by the running client's options. Changes are saved to Minecraft options and work in singleplayer and multiplayer.
+Use an ordered `wait_frames` action before capturing or profiling the changed view.
 
 `dump_program_binary` is restricted to NVIDIA's proprietary OpenGL driver. Unsupported vendors are rejected before capture. Up to 16 MiB of the complete NVIDIA pseudo-assembly is returned inline as MCP text content and also retained at the returned capture URI/path; the result reports whether inlining occurred.
 

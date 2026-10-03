@@ -10,7 +10,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GameRenderer.class)
 public class MixinGameRenderer {
 
-   @Inject(method = "render(Lnet/minecraft/client/DeltaTracker;Z)V", at = @At("TAIL"))
+   /*? if >=26.3 {*/
+   @Inject(method = "render()V", at = @At("TAIL"))
+   /*?} else {*/
+   /*@Inject(method = "render(Lnet/minecraft/client/DeltaTracker;Z)V", at = @At("TAIL"))
+   *//*?}*/
    private void viewfinder$onRenderTail(CallbackInfo ci) {
       Viewfinder.getMetricsCollector().endFrame();
       dev.xirreal.viewfinder.ViewfinderClient.getScreenshotScheduler().tick();
